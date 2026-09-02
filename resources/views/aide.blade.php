@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html lang="fr" class="h-full">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" type="image/png" href="{{ asset('images/logo-ltt.png') }}">
+<title>Mode d'emploi — Simulateur de devis LTT</title>
+<style>
+  :root {
+    --brand: #15663a;
+    --brand-dark: #0c3d20;
+    --lime: #6ba32e;
+    --ground: #f3f6f0;
+    --surface: #ffffff;
+    --surface-2: #eef3ea;
+    --ink: #17241d;
+    --muted: #5c6b61;
+    --hairline: #d7e0d1;
+    --callout: #fbf7e8;
+    --callout-line: #e4d9a8;
+    --callout-ink: #6a5a17;
+    --shadow: 0 1px 2px rgba(12,61,32,.06), 0 8px 24px -12px rgba(12,61,32,.18);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --brand: #4e9c67;
+      --brand-dark: #8fca4f;
+      --lime: #8fca4f;
+      --ground: #0e1512;
+      --surface: #16211b;
+      --surface-2: #1b2921;
+      --ink: #e7efe8;
+      --muted: #9db0a4;
+      --hairline: #26352c;
+      --callout: #211f10;
+      --callout-line: #4a4321;
+      --callout-ink: #d8c877;
+      --shadow: 0 1px 2px rgba(0,0,0,.3), 0 10px 30px -14px rgba(0,0,0,.6);
+    }
+  }
+  :root[data-theme="light"] {
+    --brand: #15663a; --brand-dark: #0c3d20; --lime: #6ba32e;
+    --ground: #f3f6f0; --surface: #ffffff; --surface-2: #eef3ea;
+    --ink: #17241d; --muted: #5c6b61; --hairline: #d7e0d1;
+    --callout: #fbf7e8; --callout-line: #e4d9a8; --callout-ink: #6a5a17;
+    --shadow: 0 1px 2px rgba(12,61,32,.06), 0 8px 24px -12px rgba(12,61,32,.18);
+  }
+  :root[data-theme="dark"] {
+    --brand: #4e9c67; --brand-dark: #8fca4f; --lime: #8fca4f;
+    --ground: #0e1512; --surface: #16211b; --surface-2: #1b2921;
+    --ink: #e7efe8; --muted: #9db0a4; --hairline: #26352c;
+    --callout: #211f10; --callout-line: #4a4321; --callout-ink: #d8c877;
+    --shadow: 0 1px 2px rgba(0,0,0,.3), 0 10px 30px -14px rgba(0,0,0,.6);
+  }
+
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, Roboto, Helvetica, Arial, sans-serif;
+    line-height: 1.62;
+    font-size: 17px;
+  }
+  .sans { font-family: inherit; }
+  .mono { font-family: ui-monospace, "SF Mono", "Cascadia Code", "Roboto Mono", Menlo, Consolas, monospace; }
+
+  .wrap { max-width: 760px; margin: 0 auto; padding: 0 22px; }
+
+  /* ---- Masthead ---- */
+  header.masthead {
+    background: linear-gradient(160deg, var(--brand-dark), var(--brand));
+    color: #fff;
+    padding: 54px 0 46px;
+  }
+  @media (prefers-color-scheme: dark) { header.masthead { background: linear-gradient(160deg, #0a1a10, #123f26); } }
+  :root[data-theme="dark"] header.masthead { background: linear-gradient(160deg, #0a1a10, #123f26); }
+  :root[data-theme="light"] header.masthead { background: linear-gradient(160deg, var(--brand-dark), var(--brand)); }
+  .eyebrow {
+    font-size: 12px; letter-spacing: .18em; text-transform: uppercase;
+    font-weight: 600; color: var(--lime);
+  }
+  header.masthead .eyebrow { color: #b9e08a; }
+  header.masthead h1 {
+    font-size: clamp(30px, 6vw, 44px); line-height: 1.08; margin: 12px 0 10px;
+    letter-spacing: -0.02em; text-wrap: balance; font-weight: 800;
+  }
+  header.masthead p.lede { margin: 0; max-width: 46ch; color: rgba(255,255,255,.86); font-size: 18px; }
+  .meta-row {
+    margin-top: 26px; display: flex; flex-wrap: wrap; gap: 10px 22px;
+    font-size: 13px; color: rgba(255,255,255,.72);
+  }
+  .meta-row b { color: #fff; font-weight: 600; }
+
+  /* ---- TOC ---- */
+  nav.toc {
+    background: var(--surface); border: 1px solid var(--hairline); border-radius: 14px;
+    box-shadow: var(--shadow); padding: 20px 24px; margin: -34px 0 40px;
+  }
+  nav.toc p.k { margin: 0 0 12px; font-size: 12px; letter-spacing: .16em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+  nav.toc ol { margin: 0; padding: 0; list-style: none; counter-reset: toc; display: grid; gap: 2px; }
+  nav.toc li { counter-increment: toc; }
+  nav.toc a {
+    display: flex; align-items: baseline; gap: 12px; text-decoration: none; color: var(--ink);
+    padding: 7px 8px; border-radius: 8px;
+  }
+  nav.toc a:hover { background: var(--surface-2); }
+  nav.toc a::before {
+    content: counter(toc, decimal-leading-zero);
+    font-family: ui-monospace, monospace; font-size: 12px; color: var(--brand); font-weight: 600;
+    min-width: 22px;
+  }
+
+  main { padding-bottom: 72px; }
+  section { margin-top: 52px; scroll-margin-top: 20px; }
+  section > .eyebrow { margin-bottom: 6px; }
+  h2 {
+    font-size: clamp(22px, 3.4vw, 28px); letter-spacing: -0.015em; margin: 0 0 6px;
+    font-weight: 800; text-wrap: balance; line-height: 1.15;
+  }
+  h2 .rule { display: block; width: 46px; height: 3px; background: var(--lime); border-radius: 2px; margin-top: 12px; }
+  h3 { font-size: 18px; margin: 30px 0 4px; font-weight: 700; letter-spacing: -0.01em; }
+  p { margin: 12px 0; }
+  a { color: var(--brand); }
+  strong { font-weight: 700; }
+
+  /* ---- Numbered steps ---- */
+  ol.steps { list-style: none; counter-reset: step; margin: 22px 0 0; padding: 0; display: grid; gap: 14px; }
+  ol.steps > li {
+    counter-increment: step; position: relative;
+    background: var(--surface); border: 1px solid var(--hairline); border-radius: 12px;
+    padding: 16px 18px 16px 62px; box-shadow: var(--shadow);
+  }
+  ol.steps > li::before {
+    content: counter(step); position: absolute; left: 14px; top: 15px;
+    width: 32px; height: 32px; border-radius: 9px;
+    background: var(--brand); color: #fff; font-weight: 700; font-size: 15px;
+    display: flex; align-items: center; justify-content: center;
+    font-variant-numeric: tabular-nums;
+  }
+  :root[data-theme="dark"] ol.steps > li::before,
+  ol.steps > li::before { }
+  @media (prefers-color-scheme: dark) { ol.steps > li::before { background: #1f6b3f; } }
+  :root[data-theme="dark"] ol.steps > li::before { background: #1f6b3f; }
+  :root[data-theme="light"] ol.steps > li::before { background: var(--brand); }
+  ol.steps > li h3 { margin: 0 0 3px; font-size: 16px; }
+  ol.steps > li p { margin: 4px 0 0; font-size: 15.5px; color: var(--muted); }
+  ol.steps > li p strong { color: var(--ink); }
+
+  ul.plain { margin: 12px 0; padding-left: 1.15em; }
+  ul.plain li { margin: 6px 0; }
+
+  /* ---- Callouts ---- */
+  .callout {
+    border: 1px solid var(--callout-line); background: var(--callout);
+    border-radius: 12px; padding: 14px 16px 14px 46px; position: relative;
+    margin: 22px 0; font-size: 15.5px; color: var(--callout-ink);
+  }
+  .callout::before { content: "⚠️"; position: absolute; left: 15px; top: 13px; font-size: 17px; }
+  .callout strong { color: var(--callout-ink); }
+  .callout.tip { border-color: var(--hairline); background: var(--surface-2); color: var(--ink); }
+  .callout.tip::before { content: "💡"; }
+  .callout.tip strong { color: var(--brand); }
+
+  /* ---- Tables ---- */
+  .tablewrap { overflow-x: auto; margin: 18px 0; border: 1px solid var(--hairline); border-radius: 12px; }
+  table { width: 100%; border-collapse: collapse; font-size: 15px; min-width: 460px; }
+  th, td { text-align: left; padding: 11px 14px; border-bottom: 1px solid var(--hairline); vertical-align: top; }
+  thead th { background: var(--surface-2); font-size: 12px; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+  tbody tr:last-child td { border-bottom: none; }
+  td .mono, th .mono { font-size: 13.5px; }
+  code {
+    font-family: ui-monospace, monospace; font-size: .88em;
+    background: var(--surface-2); padding: 1px 6px; border-radius: 5px; border: 1px solid var(--hairline);
+  }
+
+  .pill {
+    display: inline-block; font-size: 12px; font-weight: 600; padding: 2px 9px; border-radius: 999px;
+    background: var(--surface-2); color: var(--brand); border: 1px solid var(--hairline);
+  }
+
+  footer.doc {
+    border-top: 1px solid var(--hairline); margin-top: 60px; padding-top: 24px;
+    font-size: 14px; color: var(--muted);
+  }
+  footer.doc b { color: var(--ink); }
+
+  @media print {
+    body { background: #fff; font-size: 12pt; color: #000; }
+    header.masthead { background: #0c3d20 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    nav.toc { display: none; }
+    ol.steps > li, .callout, .tablewrap, nav.toc { box-shadow: none; break-inside: avoid; }
+    section { break-inside: avoid-page; }
+  }
+</style>
+
+</head>
+<body class="h-full">
+<div style="max-width:760px;margin:0 auto;padding:14px 22px 0;">
+<a href="{{ route('admin.demandes') }}" style="display:inline-flex;align-items:center;gap:6px;font:600 14px/1 system-ui;color:#15663a;text-decoration:none;">&larr; Retour au secrétariat</a>
+</div>
+<header class="masthead">
+  <div class="wrap">
+    <p class="eyebrow">Ludovic Thause Tourisme · Guide d'utilisation</p>
+    <h1>Simulateur de devis autocar</h1>
+    <p class="lede">Tout ce qu'il faut savoir pour recevoir des demandes en ligne et produire un devis en quelques clics.</p>
+    <div class="meta-row">
+      <span><b>Application</b> ludovicthause.doliexpert.fr</span>
+      <span><b>Version</b> Démonstration</span>
+      <span><b>Édité par</b> DoliExpert</span>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+  <nav class="toc" aria-label="Sommaire">
+    <p class="k">Sommaire</p>
+    <ol>
+      <li><a href="#apercu">En un coup d'œil</a></li>
+      <li><a href="#acces">Les deux espaces &amp; vos accès</a></li>
+      <li><a href="#client">Côté client — la demande en ligne</a></li>
+      <li><a href="#secretariat">Côté secrétariat — traiter &amp; chiffrer</a></li>
+      <li><a href="#reglages">Réglages — piloter tous les paramètres</a></li>
+      <li><a href="#demo">À savoir sur cette version de démonstration</a></li>
+      <li><a href="#support">Support</a></li>
+    </ol>
+  </nav>
+
+  <main>
+    <section id="apercu">
+      <p class="eyebrow">Introduction</p>
+      <h2>En un coup d'œil<span class="rule"></span></h2>
+      <p>
+        L'application se compose de <strong>deux espaces complémentaires</strong>. D'un côté, un
+        <strong>formulaire public</strong> que vos clients remplissent pour décrire leur voyage.
+        De l'autre, un <strong>espace secrétariat</strong> privé où vous retrouvez chaque demande,
+        calculez automatiquement le coût du trajet (distance, carburant, chauffeur, péages…) et
+        éditez le devis PDF aux couleurs de la société.
+      </p>
+      <p>
+        Le principe : le client saisit son besoin → vous recevez la demande → vous cliquez sur
+        <strong>Calculer</strong> → vous ajustez la marge → vous générez le devis. Rien à installer,
+        tout se passe dans le navigateur.
+      </p>
+    </section>
+
+    <section id="acces">
+      <p class="eyebrow">Accès</p>
+      <h2>Les deux espaces &amp; vos accès<span class="rule"></span></h2>
+      <div class="tablewrap">
+        <table>
+          <thead>
+            <tr><th>Espace</th><th>Adresse</th><th>Pour qui</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Formulaire client</strong></td>
+              <td><span class="mono">ludovicthause.doliexpert.fr</span></td>
+              <td>Public — vos clients, depuis votre site ou un lien direct</td>
+            </tr>
+            <tr>
+              <td><strong>Espace secrétariat</strong></td>
+              <td><span class="mono">…doliexpert.fr/connexion</span></td>
+              <td>Privé — l'équipe LTT, sur identifiants</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p>
+        L'accès au secrétariat se fait avec un identifiant e-mail et un mot de passe qui vous sont
+        <strong>communiqués séparément</strong>. Vous pouvez créer plusieurs comptes selon les personnes
+        qui traiteront les demandes.
+      </p>
+      <div class="callout tip">
+        <strong>Intégration.</strong> Le formulaire client peut être posé tel quel sur un lien, ou intégré
+        à votre site existant via un bouton « Demander un devis » pointant vers l'adresse ci-dessus.
+      </div>
+    </section>
+
+    <section id="client">
+      <p class="eyebrow">Parcours client</p>
+      <h2>Côté client — la demande en ligne<span class="rule"></span></h2>
+      <p>
+        Le formulaire est conçu pour être rempli en quelques minutes, même sur téléphone. Voici son
+        déroulé, dans l'ordre&nbsp;:
+      </p>
+      <ol class="steps">
+        <li>
+          <h3>Choisir le type de trajet</h3>
+          <p>Aller simple, aller-retour <strong>par les mêmes étapes</strong>, aller-retour <strong>par des étapes différentes</strong>, ou pas de retour. Le retour se pré-remplit automatiquement quand c'est possible.</p>
+        </li>
+        <li>
+          <h3>Renseigner les étapes du voyage</h3>
+          <p>Pour chaque point : une <strong>ville (avec code postal)</strong> et, pour le départ et l'arrivée, une <strong>adresse précise</strong> (rue + n°). La recherche est tolérante aux accents, tirets et espaces — taper <em>frejus</em> trouve <em>Fréjus</em>.</p>
+        </li>
+        <li>
+          <h3>Ajouter des étapes intermédiaires</h3>
+          <p>Le bouton <strong>« + Ajouter une étape intermédiaire »</strong> insère un arrêt entre le départ et l'arrivée. Utile pour un ramassage en plusieurs points.</p>
+        </li>
+        <li>
+          <h3>Indiquer les horaires</h3>
+          <p>Les heures s'adaptent à la position : <strong>heure de départ</strong> pour le premier point, <strong>heure d'arrivée</strong> pour le dernier, les deux pour les arrêts intermédiaires.</p>
+        </li>
+        <li>
+          <h3>Préciser le nombre de passagers</h3>
+          <p>Le <strong>nombre de personnes est obligatoire</strong>. Le choix du type de véhicule reste <strong>facultatif</strong> : s'il n'est pas indiqué, le secrétariat proposera le véhicule adapté.</p>
+        </li>
+        <li>
+          <h3>Ajouter les coordonnées et envoyer</h3>
+          <p>Nom, e-mail, téléphone, et d'éventuelles <strong>demandes particulières</strong>. À l'envoi, le client reçoit automatiquement un <strong>e-mail de confirmation</strong> (accusé de réception, pas encore le devis).</p>
+        </li>
+      </ol>
+      <div class="callout tip">
+        <strong>Voyages en Europe.</strong> Les villes hors de France (Italie, Espagne…) sont reconnues à la
+        saisie, ce qui permet de recevoir des demandes de voyages transfrontaliers.
+      </div>
+    </section>
+
+    <section id="secretariat">
+      <p class="eyebrow">Parcours secrétariat</p>
+      <h2>Côté secrétariat — traiter &amp; chiffrer<span class="rule"></span></h2>
+      <p>Une fois connecté, vous arrivez sur la liste des demandes reçues. Le traitement d'une demande suit ce fil&nbsp;:</p>
+      <ol class="steps">
+        <li>
+          <h3>Ouvrir la demande</h3>
+          <p>Cliquez sur une demande pour voir le détail : itinéraire, passagers, dates, coordonnées du client et remarques.</p>
+        </li>
+        <li>
+          <h3>Lancer le calcul</h3>
+          <p>Le bouton <strong>Calculer</strong> interroge les distances réelles et estime tous les postes : kilomètres chargés/à vide, carburant (au prix du gasoil en vigueur), chauffeur, nuitées éventuelles, péages, charges de structure.</p>
+        </li>
+        <li>
+          <h3>Choisir le véhicule</h3>
+          <p>La liste propose tous les véhicules actifs dont la capacité couvre le nombre de passagers. Le calcul se met à jour selon le véhicule retenu.</p>
+        </li>
+        <li>
+          <h3>Ajuster la marge</h3>
+          <p>Un <strong>curseur de marge</strong> recalcule instantanément le prix de vente TTC sans relancer tout l'itinéraire. Vous fixez votre prix en temps réel.</p>
+        </li>
+        <li>
+          <h3>Visualiser le trajet</h3>
+          <p>Le bouton <strong>« Ouvrir sur la carte »</strong> affiche l'aller-retour sur une carte, avec zoom — pratique pour vérifier le parcours avant de valider.</p>
+        </li>
+        <li>
+          <h3>Éditer le devis PDF</h3>
+          <p>Génération d'un <strong>PDF</strong> propre aux couleurs et coordonnées de LTT (logo, SIRET, TVA, conditions). Le statut de la demande évolue ensuite : <span class="pill">à valider</span> <span class="pill">envoyé</span> <span class="pill">accepté</span> <span class="pill">refusé</span>.</p>
+        </li>
+      </ol>
+    </section>
+
+    <section id="reglages">
+      <p class="eyebrow">Administration</p>
+      <h2>Réglages — piloter tous les paramètres<span class="rule"></span></h2>
+      <p>
+        L'onglet <strong>Réglages</strong> du secrétariat regroupe tout ce qui pilote le calcul et l'apparence
+        du devis. Cinq onglets&nbsp;:
+      </p>
+      <div class="tablewrap">
+        <table>
+          <thead>
+            <tr><th>Onglet</th><th>Ce qu'on y règle</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><strong>Paramètres</strong></td><td>Prix du gasoil, clés d'API d'itinéraire, tarifs de péage par classe de véhicule, dépôt de départ, TVA…</td></tr>
+            <tr><td><strong>Société</strong></td><td>Coordonnées de l'entreprise (nom, adresse, SIRET, TVA, téléphone, e-mail) — saisies <strong>une seule fois</strong> et reprises partout : devis PDF et pied du formulaire.</td></tr>
+            <tr><td><strong>Devis PDF</strong></td><td>Durée de validité du devis et texte des conditions affiché en bas du PDF.</td></tr>
+            <tr><td><strong>Véhicules &amp; charges</strong></td><td>Tous les paramètres des véhicules (capacité, consommation, amortissement, nombre d'essieux) et les charges de structure.</td></tr>
+            <tr><td><strong>E-mails</strong></td><td>Configuration de l'envoi et texte de l'e-mail de confirmation reçu par le client.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="callout tip">
+        <strong>Prix du gasoil automatique.</strong> Le tarif se met à jour tout seul chaque jour depuis les
+        données officielles. Un bouton <strong>« Actualiser le prix du gasoil »</strong> permet aussi de le
+        rafraîchir à la demande.
+      </div>
+    </section>
+
+    <section id="demo">
+      <p class="eyebrow">Important</p>
+      <h2>À savoir sur cette version de démonstration<span class="rule"></span></h2>
+      <p>
+        L'application est <strong>pleinement fonctionnelle</strong>, mais quelques points restent à affiner avant
+        une mise en service définitive. Ils sont signalés à l'ouverture par un message d'information.
+      </p>
+      <ul class="plain">
+        <li><strong>Péages</strong> — estimés au tarif de la classe du véhicule. À caler finement avec vos relevés réels pour un chiffrage au plus juste.</li>
+        <li><strong>Europe</strong> — les trajets hors de France sont pris en charge, mais les vignettes ne sont pas incluses et la précision est variable hors du territoire français.</li>
+        <li><strong>Données véhicules</strong> — à confirmer avec vos valeurs réelles (nombre d'essieux, charges du minibus, amortissements) via l'onglet <em>Véhicules &amp; charges</em>.</li>
+      </ul>
+      <div class="callout">
+        <strong>Avant la mise en production.</strong> Pensez à remplacer les mots de passe de démonstration
+        par des mots de passe personnels, et à confirmer les paramètres véhicules et péages. Les montants
+        affichés en démonstration ne constituent pas encore un devis ferme.
+      </div>
+    </section>
+
+    <section id="support">
+      <p class="eyebrow">Contact</p>
+      <h2>Support<span class="rule"></span></h2>
+      <p>
+        Pour toute question, ajustement de paramètre ou évolution de l'application, contactez
+        <strong>DoliExpert</strong>, éditeur de la solution. Les réglages courants (coordonnées, conditions,
+        tarifs, véhicules) sont modifiables directement par vos soins depuis l'onglet Réglages, sans
+        intervention technique.
+      </p>
+    </section>
+
+    <footer class="doc">
+      <p><b>Simulateur de devis autocar</b> — Ludovic Thause Tourisme · 14 rue Jacques Duclos, 58640 Varennes-Vauzelles.<br>
+      Guide d'utilisation · version de démonstration · édité par DoliExpert.</p>
+    </footer>
+  </main>
+</div>
+</body>
+</html>
