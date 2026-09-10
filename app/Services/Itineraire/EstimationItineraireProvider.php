@@ -2,7 +2,6 @@
 
 namespace App\Services\Itineraire;
 
-use App\Models\Parametre;
 use App\Models\Vehicule;
 
 /**
@@ -15,6 +14,7 @@ use App\Models\Vehicule;
 class EstimationItineraireProvider implements ItineraireProvider
 {
     private const FACTEUR_ROUTIER = 1.25;     // majoration vol d'oiseau → route
+
     private const VITESSE_MOY_KMH = 65.0;     // vitesse moyenne autocar (mixte)
 
     public function calculer(array $points, int $indexPriseEnCharge, int $indexDepose, Vehicule $vehicule): ResultatItineraire
@@ -58,8 +58,8 @@ class EstimationItineraireProvider implements ItineraireProvider
             payload: [
                 'facteur_routier' => self::FACTEUR_ROUTIER,
                 'vitesse_moy_kmh' => self::VITESSE_MOY_KMH,
-                'tarif_peage_km'  => $tarifKm,
-                'segments'        => $segments,
+                'tarif_peage_km' => $tarifKm,
+                'segments' => $segments,
             ],
         );
     }

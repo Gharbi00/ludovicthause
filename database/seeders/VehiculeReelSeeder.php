@@ -44,29 +44,29 @@ class VehiculeReelSeeder extends Seeder
 
         foreach ($vehicules as [$immat, $modele, $capCat, $places, $essieux, $conso, $entretien, $pneus, $assur, $taxes, $valeur, $estime]) {
             $note = $modele
-                . ($valeur ? ' — valeur remplacement : ' . number_format($valeur, 0, ',', ' ') . ' € (amortissement à définir)' : '')
-                . ($estime ? ' — ⚠ charges/profil à confirmer' : '');
+                .($valeur ? ' — valeur remplacement : '.number_format($valeur, 0, ',', ' ').' € (amortissement à définir)' : '')
+                .($estime ? ' — ⚠ charges/profil à confirmer' : '');
 
             Vehicule::updateOrCreate(
                 ['immatriculation' => $immat],
                 [
-                    'numero_parc'                    => null,
-                    'categorie_id'                   => $cat[$capCat] ?? Categorie::value('id'),
-                    'nb_places'                      => $places,
-                    'nb_essieux'                     => $essieux,
-                    'type_energie'                   => 'gazole',
-                    'conso_l_100km'                  => $conso,
-                    'loyer_credit_bail_mensuel'      => 0,
-                    'assurance_annuelle'             => $assur,
-                    'quote_part_loyers_annuelle'     => 0,      // amortissement à définir
+                    'numero_parc' => null,
+                    'categorie_id' => $cat[$capCat] ?? Categorie::value('id'),
+                    'nb_places' => $places,
+                    'nb_essieux' => $essieux,
+                    'type_energie' => 'gazole',
+                    'conso_l_100km' => $conso,
+                    'loyer_credit_bail_mensuel' => 0,
+                    'assurance_annuelle' => $assur,
+                    'quote_part_loyers_annuelle' => 0,      // amortissement à définir
                     'autres_charges_fixes_annuelles' => $taxes,
-                    'cout_entretien_km'              => $entretien,
-                    'cout_pneus_km'                  => $pneus,
-                    'cout_adblue_km'                 => 0,
-                    'autres_variables_km'            => 0,
-                    'jours_exploitation_an'          => 236,
-                    'actif'                          => true,
-                    'notes'                          => $note,
+                    'cout_entretien_km' => $entretien,
+                    'cout_pneus_km' => $pneus,
+                    'cout_adblue_km' => 0,
+                    'autres_variables_km' => 0,
+                    'jours_exploitation_an' => 236,
+                    'actif' => true,
+                    'notes' => $note,
                 ]
             );
         }

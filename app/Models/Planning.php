@@ -26,7 +26,7 @@ class Planning extends Model
     {
         return [
             'date_debut' => 'datetime',
-            'date_fin'   => 'datetime',
+            'date_fin' => 'datetime',
         ];
     }
 
@@ -37,7 +37,7 @@ class Planning extends Model
     public function scopeChevauche(Builder $query, $debut, $fin): Builder
     {
         return $query->where('date_debut', '<', $fin)
-                     ->where('date_fin', '>', $debut);
+            ->where('date_fin', '>', $debut);
     }
 
     public function vehicule(): BelongsTo

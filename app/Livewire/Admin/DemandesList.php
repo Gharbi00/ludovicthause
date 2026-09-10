@@ -34,7 +34,7 @@ class DemandesList extends Component
             ->withCount('etapes')
             ->when($this->statut !== '', fn ($q) => $q->where('statut', $this->statut))
             ->when($this->recherche !== '', function ($q) {
-                $terme = '%' . $this->recherche . '%';
+                $terme = '%'.$this->recherche.'%';
                 $q->where(fn ($sub) => $sub
                     ->where('reference', 'like', $terme)
                     ->orWhere('client_nom', 'like', $terme)
@@ -48,7 +48,7 @@ class DemandesList extends Component
             ->pluck('total', 'statut');
 
         return view('livewire.admin.demandes-list', [
-            'demandes'  => $demandes,
+            'demandes' => $demandes,
             'compteurs' => $compteurs,
         ]);
     }

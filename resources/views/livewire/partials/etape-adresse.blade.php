@@ -3,6 +3,10 @@
                  $sugVille, $sugAdresse, $mVille, $mAdresse, $mChangerVille, $mChangerAdresse --}}
 
 {{-- Ville --}}
+@php
+    $villeSuggestions = data_get($sugVille, (string) $i, []);
+    $adresseSuggestions = data_get($sugAdresse, (string) $i, []);
+@endphp
 <div class="sm:col-span-2">
     <label class="block text-xs font-medium text-slate-600">Ville</label>
     @if ($locked)
@@ -20,9 +24,9 @@
                    wire:model.live.debounce.350ms="{{ $prefixe }}.{{ $i }}.ville_recherche"
                    placeholder="Ville (France ou Europe) — ex. Nevers, Milan…"
                    class="w-full rounded-lg border-slate-300 shadow-sm focus:border-brand focus:ring-brand">
-            @if (!empty($sugVille[$i]))
-                <ul class="absolute z-20 mt-1 w-full overflow-hidden rounded-lg border border-slate-200 bg-white shadow-lg">
-                    @foreach ($sugVille[$i] as $k => $s)
+            @if ($villeSuggestions !== [])
+                <ul class="absolute z-20 mt-1 max-h-72 w-full overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-lg">
+                    @foreach ($villeSuggestions as $k => $s)
                         <li>
                             <button type="button" wire:click="{{ $mVille }}({{ $i }}, {{ $k }})"
                                     class="block w-full px-3 py-2 text-left text-sm hover:bg-green-50">{{ $s['label'] }}</button>
@@ -59,9 +63,9 @@
                        wire:model.live.debounce.350ms="{{ $prefixe }}.{{ $i }}.adresse_recherche"
                        placeholder="N° et nom de rue dans {{ $etape['ville'] }}…"
                        class="w-full rounded-lg border-slate-300 shadow-sm focus:border-brand focus:ring-brand">
-                @if (!empty($sugAdresse[$i]))
-                    <ul class="absolute z-20 mt-1 w-full overflow-hidden rounded-lg border border-slate-200 bg-white shadow-lg">
-                        @foreach ($sugAdresse[$i] as $k => $s)
+                @if ($adresseSuggestions !== [])
+                    <ul class="absolute z-20 mt-1 max-h-72 w-full overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-lg">
+                        @foreach ($adresseSuggestions as $k => $s)
                             <li>
                                 <button type="button" wire:click="{{ $mAdresse }}({{ $i }}, {{ $k }})"
                                         class="block w-full px-3 py-2 text-left text-sm hover:bg-green-50">{{ $s['label'] }}</button>
@@ -72,5 +76,6 @@
             </div>
         @endif
         @error("$prefixe.$i.adresse") <p data-erreur class="mt-1 text-xs text-red-600">{{ $message }}</p> @enderror
+        @error("$prefixe.$i.adresse_validee") <p data-erreur class="mt-1 text-xs text-red-600">{{ $message }}</p> @enderror
     </div>
 @endif

@@ -17,10 +17,12 @@ class ActualiserGasoil extends Command
 
         if ($prix === null) {
             $this->error('Prix du gasoil indisponible (API injoignable).');
+
             return self::FAILURE;
         }
 
         $this->info("Prix du gasoil actualisé : {$prix} €/L.");
+
         return self::SUCCESS;
     }
 }

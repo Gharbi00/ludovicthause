@@ -10,6 +10,5 @@ class ConfigurationChauffeur
         public readonly int $nbJours,
         public readonly int $conduiteParJourMinutes,
         public readonly array $details = [],
-    ) {
-    }
+    ) {}
 }

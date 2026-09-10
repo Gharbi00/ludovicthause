@@ -16,9 +16,7 @@ class ConfirmationDemande extends Mailable
 {
     use Queueable, SerializesModels;
 
-    public function __construct(public Demande $demande)
-    {
-    }
+    public function __construct(public Demande $demande) {}
 
     public function envelope(): Envelope
     {
@@ -37,8 +35,8 @@ class ConfirmationDemande extends Mailable
 
         return new Content(
             htmlString: '<div style="font-family:Arial,sans-serif;font-size:14px;color:#1e293b;line-height:1.6">'
-                . nl2br(e($this->remplacer($corps)))
-                . '</div>',
+                .nl2br(e($this->remplacer($corps)))
+                .'</div>',
         );
     }
 
@@ -46,7 +44,7 @@ class ConfirmationDemande extends Mailable
     protected function remplacer(string $texte): string
     {
         return strtr($texte, [
-            '{nom}'       => $this->demande->client_nom,
+            '{nom}' => $this->demande->client_nom,
             '{reference}' => $this->demande->reference,
         ]);
     }

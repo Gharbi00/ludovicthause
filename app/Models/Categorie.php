@@ -16,6 +16,8 @@ class Categorie extends Model
         'libelle',
         'capacite',
         'gabarit',
+        'photo_path',
+        'ordre',
         'actif',
     ];
 
@@ -23,7 +25,8 @@ class Categorie extends Model
     {
         return [
             'capacite' => 'integer',
-            'actif'    => 'boolean',
+            'ordre' => 'integer',
+            'actif' => 'boolean',
         ];
     }
 

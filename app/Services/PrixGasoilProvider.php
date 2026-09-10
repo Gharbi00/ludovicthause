@@ -19,7 +19,7 @@ class PrixGasoilProvider
         try {
             $resp = Http::timeout(20)->get(self::URL, [
                 'select' => 'avg(gazole_prix) as prix_moyen',
-                'limit'  => 1,
+                'limit' => 1,
             ]);
         } catch (\Throwable $e) {
             return null;

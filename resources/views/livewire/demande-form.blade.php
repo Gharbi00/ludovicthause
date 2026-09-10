@@ -28,6 +28,60 @@
                     <span class="text-brand">1.</span> Votre voyage
                 </h2>
                 <div class="mt-4 grid gap-5 sm:grid-cols-2">
+                    <div class="sm:col-span-2">
+                        <span class="block text-sm font-medium text-slate-700">Mode de demande</span>
+                        <div class="mt-2 grid gap-2 sm:grid-cols-2">
+                            <label class="flex cursor-pointer items-start gap-3 rounded-lg border border-slate-200 p-3 hover:bg-slate-50">
+                                <input type="radio" wire:model.live="mode" value="estimation" class="mt-1 text-brand focus:ring-brand">
+                                <span><strong>Estimation</strong><br><small class="text-slate-500">Sans lieu obligatoire, estimation indicative non contractuelle.</small></span>
+                            </label>
+                            <label class="flex cursor-pointer items-start gap-3 rounded-lg border border-slate-200 p-3 hover:bg-slate-50">
+                                <input type="radio" wire:model.live="mode" value="ferme" class="mt-1 text-brand focus:ring-brand">
+                                <span><strong>Demande ferme</strong><br><small class="text-slate-500">Lieux et adresses obligatoires, sélectionnés dans la liste.</small></span>
+                            </label>
+                        </div>
+                        @error('mode') <p data-erreur class="mt-1 text-xs text-red-600">{{ $message }}</p> @enderror
+                    </div>
+                    <div class="sm:col-span-2">
+                        <label class="block text-sm font-medium text-slate-700">Nature de la prestation</label>
+                        <select wire:model.live="nature_prestation"
+                                class="mt-1 w-full rounded-lg border-slate-300 shadow-sm focus:border-brand focus:ring-brand">
+                            <option value="">— Choisir une prestation —</option>
+                            <option value="mariage">Mariage</option>
+                            <option value="team_building">Team building</option>
+                            <option value="voyage_organise">Voyage organisé</option>
+                            <option value="sortie_scolaire">Sortie scolaire</option>
+                            <option value="excursion">Excursion</option>
+                            <option value="transfert">Transfert</option>
+                            <option value="evenement">Événement</option>
+                            <option value="autre">Autre</option>
+                        </select>
+                        @error('nature_prestation') <p data-erreur class="mt-1 text-xs text-red-600">{{ $message }}</p> @enderror
+                        @if ($nature_prestation === 'autre')
+                            <input type="text" wire:model.blur="nature_prestation_autre"
+                                   placeholder="Précisez la nature de la prestation"
+                                   class="mt-2 w-full rounded-lg border-slate-300 shadow-sm focus:border-brand focus:ring-brand">
+                            @error('nature_prestation_autre') <p data-erreur class="mt-1 text-xs text-red-600">{{ $message }}</p> @enderror
+                        @endif
+                    </div>
+                    <div class="sm:col-span-2 rounded-lg bg-amber-50 p-3 text-xs text-amber-800 ring-1 ring-amber-200">
+                        @if ($mode === 'estimation')
+                            Estimation indicative, non contractuelle. Les lieux sont facultatifs et pourront être ajoutés plus tard sans ressaisie.
+                        @else
+                            Demande ferme : sélectionnez chaque ville et chaque adresse dans les suggestions.
+                        @endif
+                    </div>
+                    <div class="sm:col-span-2">
+                        <label class="block text-sm font-medium text-slate-700">Type de trajet</label>
+                        <select wire:model.live="type_trajet" class="mt-1 w-full rounded-lg border-slate-300 shadow-sm focus:border-brand focus:ring-brand">
+                            <option value="simple">Aller simple</option>
+                            <option value="journee">Aller-retour dans la journée</option>
+                            <option value="multi_jours">Mise à disposition / voyage multi-jours</option>
+                        </select>
+                        @error('type_trajet') <p data-erreur class="mt-1 text-xs text-red-600">{{ $message }}</p> @enderror
+                    </div>
+                </div>
+                <div class="mt-4 grid gap-5 sm:grid-cols-2">
                     <div>
                         <label class="block text-sm font-medium text-slate-700">Nombre de passagers</label>
                         <input type="number" min="1" max="120" wire:model.live="nb_passagers"
@@ -40,7 +94,7 @@
                                 class="mt-1 w-full rounded-lg border-slate-300 shadow-sm focus:border-brand focus:ring-brand">
                             <option value="">— Choisir —</option>
                             @foreach ($this->categories as $cat)
-                                <option value="{{ $cat->id }}">{{ $cat->libelle }}</option>
+                                <option value="{{ $cat->id }}">{{ $cat->libelle }} ({{ $cat->capacite }} pl.)</option>
                             @endforeach
                         </select>
                         @error('categorie_id') <p class="mt-1 text-xs text-red-600">{{ $message }}</p> @enderror
@@ -100,7 +154,7 @@
                             <div class="grid gap-4 sm:grid-cols-2">
                                 @include('livewire.partials.etape-adresse', [
                                     'prefixe' => 'etapes', 'i' => $i, 'etape' => $etape,
-                                    'locked' => false, 'adresseRequise' => $estPremier || $estDernier,
+                                    'locked' => false, 'adresseRequise' => $mode === 'ferme' && ($estPremier || $estDernier),
                                     'sugVille' => $suggestionsVille, 'sugAdresse' => $suggestionsAdresse,
                                     'mVille' => 'choisirVille', 'mAdresse' => 'choisirAdresse',
                                     'mChangerVille' => 'changerVille', 'mChangerAdresse' => 'changerAdresse',
@@ -198,7 +252,7 @@
                                     @include('livewire.partials.etape-adresse', [
                                         'prefixe' => 'etapes_retour', 'i' => $i, 'etape' => $etape,
                                         'locked' => (bool) ($etape['locked'] ?? false),
-                                        'adresseRequise' => $rPremier || $rDernier,
+                                        'adresseRequise' => $mode === 'ferme' && ($rPremier || $rDernier),
                                         'sugVille' => $suggestionsVilleRetour, 'sugAdresse' => $suggestionsAdresseRetour,
                                         'mVille' => 'choisirVilleRetour', 'mAdresse' => 'choisirAdresseRetour',
                                         'mChangerVille' => 'changerVilleRetour', 'mChangerAdresse' => 'changerAdresseRetour',
@@ -273,6 +327,11 @@
                 <div class="hidden" aria-hidden="true">
                     <label>Ne pas remplir <input type="text" wire:model="website" tabindex="-1" autocomplete="off"></label>
                 </div>
+                <label class="mt-4 flex items-start gap-2 text-xs text-slate-600">
+                    <input type="checkbox" wire:model="consentement_rgpd" class="mt-0.5 rounded border-slate-300 text-brand focus:ring-brand">
+                    <span>J’accepte que mes données soient utilisées pour traiter ma demande de devis. Consultez notre <a href="/confidentialite" target="_blank" class="text-brand underline">politique de confidentialité</a>.</span>
+                </label>
+                @error('consentement_rgpd') <p data-erreur class="mt-1 text-xs text-red-600">{{ $message }}</p> @enderror
             </section>
 
             @if ($errors->any() && ! $errors->has('rate_limit'))
@@ -281,13 +340,33 @@
                 </div>
             @endif
 
+            @if ($showRecap)
+                <section class="rounded-2xl bg-slate-50 p-5 ring-1 ring-slate-200">
+                    <h2 class="text-lg font-semibold text-slate-900">Récapitulatif de votre demande</h2>
+                    <p class="mt-1 text-sm text-slate-600">Vérifiez les informations avant l’envoi. Vous pouvez revenir à chaque étape.</p>
+                    <dl class="mt-4 grid gap-2 text-sm sm:grid-cols-2">
+                        <div><dt class="text-slate-400">Type</dt><dd class="font-medium">{{ ['simple'=>'Aller simple','journee'=>'Aller-retour dans la journée','multi_jours'=>'Mise à disposition / voyage multi-jours'][$type_trajet] }}</dd></div>
+                        <div><dt class="text-slate-400">Prestation</dt><dd class="font-medium">{{ $nature_prestation === 'autre' ? $nature_prestation_autre : ucfirst(str_replace('_', ' ', $nature_prestation)) }}</dd></div>
+                    </dl>
+                    <div class="mt-4 space-y-2 text-sm">
+                        @foreach ($etapes as $etape)
+                            <div class="rounded-lg bg-white p-3">{{ $etape['ville'] ?: 'Lieu à préciser' }} @if($etape['adresse']) · {{ $etape['adresse'] }} @endif · {{ $etape['date'] ?: 'Date à préciser' }}</div>
+                        @endforeach
+                    </div>
+                    <div class="mt-4 flex flex-wrap gap-2">
+                        <button type="button" wire:click="modifierRecap" class="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700">Modifier</button>
+                        <button type="button" wire:click="submit" class="rounded-lg bg-brand px-5 py-2 text-sm font-semibold text-white hover:bg-brand-dark">Confirmer et envoyer</button>
+                    </div>
+                </section>
+            @endif
+
             <div class="flex items-center justify-between gap-4">
                 <p class="text-xs text-slate-400">Aucun tarif n'est affiché : notre équipe chiffre votre demande manuellement.</p>
-                <button type="submit"
+                <button type="button" wire:click="ouvrirRecap"
                         class="inline-flex items-center rounded-lg bg-brand px-6 py-3 text-white font-semibold shadow-sm hover:bg-brand-dark disabled:opacity-50"
-                        wire:loading.attr="disabled">
-                    <span wire:loading.remove wire:target="submit">Envoyer ma demande</span>
-                    <span wire:loading wire:target="submit">Envoi…</span>
+                        wire:loading.attr="disabled" @disabled($showRecap)>
+                    <span wire:loading.remove wire:target="ouvrirRecap">Voir le récapitulatif</span>
+                    <span wire:loading wire:target="ouvrirRecap">Vérification…</span>
                 </button>
             </div>
         </form>

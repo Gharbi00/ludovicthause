@@ -3,6 +3,7 @@
 namespace App\Providers;
 
 use App\Models\Parametre;
+use App\Services\ApiTracker;
 use App\Services\Itineraire\EstimationItineraireProvider;
 use App\Services\Itineraire\HereItineraireProvider;
 use App\Services\Itineraire\ItineraireProvider;
@@ -21,16 +22,16 @@ class AppServiceProvider extends ServiceProvider
         $this->app->bind(ItineraireProvider::class, function ($app) {
             try {
                 $cleHere = Parametre::get('here_api_key');
-                $cleOrs  = Parametre::get('ors_api_key');
+                $cleOrs = Parametre::get('ors_api_key');
             } catch (\Throwable $e) {
                 $cleHere = $cleOrs = null; // base non disponible (ex. pendant les migrations)
             }
 
             if ($cleHere) {
-                return new HereItineraireProvider($cleHere);
+                return new HereItineraireProvider($cleHere, app(ApiTracker::class));
             }
             if ($cleOrs) {
-                return new OpenRouteServiceProvider($cleOrs);
+                return new OpenRouteServiceProvider($cleOrs, app(ApiTracker::class));
             }
 
             return $app->make(EstimationItineraireProvider::class);

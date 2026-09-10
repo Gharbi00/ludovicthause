@@ -11,7 +11,9 @@ use Livewire\Component;
 class MotDePasse extends Component
 {
     public string $actuel = '';
+
     public string $nouveau = '';
+
     public string $nouveau_confirmation = '';
 
     /** Vrai si l'utilisateur est ici parce que son mot de passe est provisoire. */
@@ -25,10 +27,10 @@ class MotDePasse extends Component
     protected function messages(): array
     {
         return [
-            'actuel.required'   => 'Saisissez votre mot de passe actuel.',
+            'actuel.required' => 'Saisissez votre mot de passe actuel.',
             'actuel.current_password' => 'Mot de passe actuel incorrect.',
-            'nouveau.required'  => 'Choisissez un nouveau mot de passe.',
-            'nouveau.min'       => 'Le nouveau mot de passe doit contenir au moins 8 caractères.',
+            'nouveau.required' => 'Choisissez un nouveau mot de passe.',
+            'nouveau.min' => 'Le nouveau mot de passe doit contenir au moins 8 caractères.',
             'nouveau.confirmed' => 'La confirmation ne correspond pas.',
             'nouveau.different' => 'Le nouveau mot de passe doit être différent de l’actuel.',
         ];
@@ -37,7 +39,7 @@ class MotDePasse extends Component
     public function enregistrer()
     {
         $this->validate([
-            'actuel'  => ['required', 'current_password'],
+            'actuel' => ['required', 'current_password'],
             'nouveau' => ['required', 'string', 'min:8', 'max:255', 'confirmed', 'different:actuel'],
         ]);
 

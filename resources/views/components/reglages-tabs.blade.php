@@ -6,6 +6,7 @@
         'admin.reglages.vehicules' => 'Véhicules & charges',
         'admin.reglages.emails'    => 'E-mails',
         'admin.reglages.utilisateurs' => 'Utilisateurs & journal',
+        'admin.reglages.api'       => 'API & cache',
     ];
 @endphp
 <div class="mb-6 border-b border-slate-200">

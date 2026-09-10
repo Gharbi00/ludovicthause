@@ -15,20 +15,27 @@ class Demande extends Model
 
     protected $fillable = [
         'reference',
+        'mode',
+        'type_trajet',
         'categorie_id',
         'nb_passagers',
+        'nature_prestation',
         'client_nom',
         'client_email',
         'client_telephone',
         'statut',
         'commentaire',
         'ip_soumission',
+        'consentement_rgpd',
+        'consentement_rgpd_at',
     ];
 
     protected function casts(): array
     {
         return [
             'nb_passagers' => 'integer',
+            'consentement_rgpd' => 'boolean',
+            'consentement_rgpd_at' => 'datetime',
         ];
     }
 

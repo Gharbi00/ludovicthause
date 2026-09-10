@@ -27,13 +27,16 @@ class Utilisateurs extends Component
     public string $motdepasse = '';
 
     public bool $estAdmin = false;
+
     public bool $envoyerParEmail = true;
 
     // --- Réinitialisation de mot de passe ---
     public ?int $resetId = null;
+
     public string $resetMotDePasse = '';
 
     public string $flash = '';
+
     public string $erreur = '';
 
     public function mount(): void
@@ -44,12 +47,12 @@ class Utilisateurs extends Component
     protected function messages(): array
     {
         return [
-            'nom.required'        => 'Indiquez un nom.',
-            'email.required'      => 'Indiquez une adresse e-mail.',
-            'email.email'         => 'Adresse e-mail invalide.',
-            'email.unique'        => 'Cette adresse e-mail est déjà utilisée.',
+            'nom.required' => 'Indiquez un nom.',
+            'email.required' => 'Indiquez une adresse e-mail.',
+            'email.email' => 'Adresse e-mail invalide.',
+            'email.unique' => 'Cette adresse e-mail est déjà utilisée.',
             'motdepasse.required' => 'Choisissez un mot de passe.',
-            'motdepasse.min'      => 'Le mot de passe doit contenir au moins 8 caractères.',
+            'motdepasse.min' => 'Le mot de passe doit contenir au moins 8 caractères.',
         ];
     }
 
@@ -79,15 +82,15 @@ class Utilisateurs extends Component
         $this->validate();
 
         $user = User::create([
-            'name'     => $this->nom,
-            'email'    => strtolower($this->email),
+            'name' => $this->nom,
+            'email' => strtolower($this->email),
             'password' => $this->motdepasse,
-            'role'     => $this->estAdmin ? 'admin' : 'secretaire',
+            'role' => $this->estAdmin ? 'admin' : 'secretaire',
             // Mot de passe envoyé en clair par e-mail = provisoire, à changer à la 1re connexion.
             'must_change_password' => $this->envoyerParEmail,
         ]);
 
-        Journal::enregistrer('Création de compte', $user->email . ' (' . $user->role . ')');
+        Journal::enregistrer('Création de compte', $user->email.' ('.$user->role.')');
 
         $message = 'Utilisateur créé.';
         if ($this->envoyerParEmail) {
@@ -115,7 +118,7 @@ class Utilisateurs extends Component
 
         if ($this->envoyerIdentifiants($user, $provisoire)) {
             Journal::enregistrer('Envoi des identifiants', $user->email);
-            $this->flash = 'Identifiants envoyés à ' . $user->email . ' (mot de passe provisoire).';
+            $this->flash = 'Identifiants envoyés à '.$user->email.' (mot de passe provisoire).';
         } else {
             $this->erreur = 'Le mot de passe a été réinitialisé mais l’e-mail n’a pas pu être envoyé (voir Réglages → E-mails).';
         }
@@ -147,17 +150,19 @@ class Utilisateurs extends Component
 
         if ($user->id === Auth::id()) {
             $this->erreur = 'Vous ne pouvez pas modifier votre propre rôle.';
+
             return;
         }
 
         if ($user->isAdmin() && $this->nombreAdmins() <= 1) {
             $this->erreur = 'Il doit rester au moins un administrateur.';
+
             return;
         }
 
         $user->update(['role' => $user->isAdmin() ? 'secretaire' : 'admin']);
-        Journal::enregistrer('Changement de rôle', $user->email . ' → ' . $user->role);
-        $this->flash = 'Rôle mis à jour : ' . $user->name . ' est désormais ' . ($user->isAdmin() ? 'administrateur' : 'secrétaire') . '.';
+        Journal::enregistrer('Changement de rôle', $user->email.' → '.$user->role);
+        $this->flash = 'Rôle mis à jour : '.$user->name.' est désormais '.($user->isAdmin() ? 'administrateur' : 'secrétaire').'.';
     }
 
     public function supprimer(int $id): void
@@ -170,11 +175,13 @@ class Utilisateurs extends Component
 
         if ($user->id === Auth::id()) {
             $this->erreur = 'Vous ne pouvez pas supprimer votre propre compte.';
+
             return;
         }
 
         if ($user->isAdmin() && $this->nombreAdmins() <= 1) {
             $this->erreur = 'Impossible de supprimer le dernier administrateur.';
+
             return;
         }
 
@@ -203,6 +210,7 @@ class Utilisateurs extends Component
         $user = User::find($this->resetId);
         if (! $user) {
             $this->annulerReset();
+
             return;
         }
 
@@ -214,7 +222,7 @@ class Utilisateurs extends Component
         // Mot de passe défini manuellement par l'admin (communiqué de vive voix) : non provisoire.
         $user->update(['password' => $this->resetMotDePasse, 'must_change_password' => false]);
         Journal::enregistrer('Réinitialisation de mot de passe', $user->email);
-        $this->flash = 'Mot de passe réinitialisé pour ' . $user->name . '.';
+        $this->flash = 'Mot de passe réinitialisé pour '.$user->name.'.';
         $this->annulerReset();
     }
 

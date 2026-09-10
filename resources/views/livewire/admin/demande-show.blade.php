@@ -7,11 +7,52 @@
                 <x-statut-badge :statut="$demande->statut" />
             </h1>
             <p class="text-sm text-slate-500">Reçue le {{ $demande->created_at->format('d/m/Y à H:i') }}</p>
+            <p class="mt-1 text-sm font-medium {{ $demande->mode === 'estimation' ? 'text-amber-700' : 'text-brand' }}">
+                {{ $demande->mode === 'estimation' ? 'Estimation indicative, non contractuelle' : 'Demande ferme' }}
+                @if ($demande->nature_prestation) · {{ $demande->nature_prestation }} @endif
+            </p>
+            @if ($demande->mode === 'estimation')
+                <button type="button" wire:click="convertirEnFerme" class="mt-2 rounded-lg bg-brand px-3 py-2 text-sm font-medium text-white hover:bg-brand-dark">
+                    Convertir en demande ferme
+                </button>
+            @endif
         </div>
     </div>
 
     @if ($flash)
         <div class="mb-4 rounded-lg bg-green-50 p-3 text-sm text-green-700 ring-1 ring-green-200">{{ $flash }}</div>
+    @endif
+
+    @if ($devis?->cout_revient_ht > 0)
+        @php $rse = $resume_rse; @endphp
+        <div class="mb-4 rounded-2xl bg-white shadow-sm ring-1 ring-slate-200 p-4">
+            <div class="flex flex-wrap items-center gap-4 text-xs font-medium">
+                <span class="text-slate-400 uppercase tracking-wide">RSE</span>
+                <span class="inline-flex items-center gap-1 px-2 py-1 rounded-full
+                    @if($rse['statutAmplitude']==='vert') bg-green-100 text-green-700
+                    @elseif($rse['statutAmplitude']==='orange') bg-orange-100 text-orange-700
+                    @elseif($rse['statutAmplitude']==='rouge') bg-red-100 text-red-700
+                    @else bg-slate-100 text-slate-500 @endif">
+                    Amplitude {{ $rse['amplitude'] ? intdiv($rse['amplitude'],60).'h'.str_pad($rse['amplitude']%60,2,'0',STR_PAD_LEFT) : '—' }}
+                </span>
+                <span class="inline-flex items-center gap-1 px-2 py-1 rounded-full
+                    @if($rse['statutTte']==='vert') bg-green-100 text-green-700
+                    @elseif($rse['statutTte']==='orange') bg-orange-100 text-orange-700
+                    @elseif($rse['statutTte']==='rouge') bg-red-100 text-red-700
+                    @else bg-slate-100 text-slate-500 @endif">
+                    TTE {{ $rse['tte'] ? intdiv($rse['tte'],60).'h'.str_pad($rse['tte']%60,2,'0',STR_PAD_LEFT) : '—' }}
+                </span>
+                <span class="inline-flex items-center gap-1 px-2 py-1 rounded-full
+                    @if($rse['statutConduite']==='vert') bg-green-100 text-green-700
+                    @elseif($rse['statutConduite']==='orange') bg-orange-100 text-orange-700
+                    @elseif($rse['statutConduite']==='rouge') bg-red-100 text-red-700
+                    @else bg-slate-100 text-slate-500 @endif">
+                    Conduite {{ $rse['conduite'] ? intdiv($rse['conduite'],60).'h'.str_pad($rse['conduite']%60,2,'0',STR_PAD_LEFT) : '—' }}
+                </span>
+                <span class="text-slate-500">100 % {{ $rse['heures100'] ? intdiv($rse['heures100'],60).'h'.str_pad($rse['heures100']%60,2,'0',STR_PAD_LEFT) : '—' }}</span>
+                <span class="text-slate-500">50 % {{ $rse['heures50'] ? intdiv($rse['heures50'],60).'h'.str_pad($rse['heures50']%60,2,'0',STR_PAD_LEFT) : '—' }}</span>
+            </div>
+        </div>
     @endif
 
     <div class="grid gap-6 lg:grid-cols-3">
@@ -21,16 +62,20 @@
                 <h2 class="text-sm font-semibold uppercase tracking-wide text-slate-400">Voyage demandé</h2>
                 <div class="mt-3 grid gap-4 sm:grid-cols-3 text-sm">
                     <div>
+                        <div class="text-slate-400">Type de trajet</div>
+                        <div class="font-medium text-slate-800">{{ ['simple'=>'Aller simple','journee'=>'Aller-retour dans la journée','multi_jours'=>'Mise à disposition / voyage multi-jours'][$demande->type_trajet] ?? $demande->type_trajet }}</div>
+                    </div>
+                    <div>
+                        <div class="text-slate-400">Nature de la prestation</div>
+                        <div class="font-medium text-slate-800">{{ $demande->nature_prestation ?? '—' }}</div>
+                    </div>
+                    <div>
                         <div class="text-slate-400">Catégorie</div>
                         <div class="font-medium text-slate-800">{{ $demande->categorie?->libelle ?? '—' }}</div>
                     </div>
                     <div>
                         <div class="text-slate-400">Passagers</div>
                         <div class="font-medium text-slate-800">{{ $demande->nb_passagers }}</div>
-                    </div>
-                    <div>
-                        <div class="text-slate-400">Étapes</div>
-                        <div class="font-medium text-slate-800">{{ $demande->etapes->count() }}</div>
                     </div>
                 </div>
                 @if ($demande->commentaire)
@@ -62,6 +107,32 @@
                                     </span>
                                 @endif
                             </div>
+                            @if ($etape->lieu_libelle || $etape->latitude)
+                                <div class="mt-2 rounded-lg bg-slate-50 p-3">
+                                    <div class="text-xs font-medium text-slate-600">
+                                        {{ $etape->lieu_libelle ?: $etape->libelle() }}
+                                        @if ($etape->geocodage_source)
+                                            <span class="ml-1 rounded bg-white px-1.5 py-0.5 text-[10px] text-slate-400">{{ $etape->geocodage_source }}</span>
+                                        @endif
+                                    </div>
+                                     <div class="mt-2 grid gap-2 sm:grid-cols-2">
+                                         <input type="text" wire:model="lieuLibelle.{{ $etape->id }}" placeholder="Nom du lieu"
+                                             class="rounded border-slate-300 text-xs shadow-sm">
+                                         <input type="text" wire:model="lieuAdresse.{{ $etape->id }}" placeholder="Adresse normalisée"
+                                             class="rounded border-slate-300 text-xs shadow-sm">
+                                        <input type="text" wire:model="lieuAcces.{{ $etape->id }}" placeholder="Accès / dépose"
+                                               class="rounded border-slate-300 text-xs shadow-sm">
+                                        <input type="text" wire:model="lieuContact.{{ $etape->id }}" placeholder="Contact sur place"
+                                               class="rounded border-slate-300 text-xs shadow-sm">
+                                        <input type="text" wire:model="lieuCommentaire.{{ $etape->id }}" placeholder="Commentaire"
+                                               class="rounded border-slate-300 text-xs shadow-sm">
+                                    </div>
+                                    <button type="button" wire:click="enregistrerEnrichissementLieu({{ $etape->id }})"
+                                            class="mt-2 rounded border border-slate-300 px-2 py-1 text-xs text-slate-600 hover:bg-white">
+                                        Enregistrer les informations du lieu
+                                    </button>
+                                </div>
+                            @endif
                         </li>
                     @endforeach
                 </ol>
@@ -186,6 +257,164 @@
                                 · {{ $devis->nb_chauffeurs }} chauffeur(s)@if($devis->nb_nuitees) · {{ $devis->nb_nuitees }} nuitée(s)@endif
                             </span>
                         </div>
+                        @php $grilleRse = $devis->calcul_payload['rse']['grille_journaliere'] ?? []; @endphp
+                        @php $postesParJour = $devis->postes->groupBy(fn ($p) => $p->date->format('Y-m-d')); @endphp
+                        @if ($grilleRse)
+                            <div class="mt-3 overflow-x-auto rounded-lg border border-slate-200">
+                                <table class="min-w-full text-xs">
+                                    <thead class="bg-slate-50 text-left text-slate-500">
+                                        <tr>
+                                            <th class="px-2 py-2">Jour</th>
+                                            <th class="px-2 py-2">100 %</th>
+                                            <th class="px-2 py-2">50 %</th>
+                                            <th class="px-2 py-2">TTE</th>
+                                            <th class="px-2 py-2">Amplitude</th>
+                                            <th class="px-2 py-2">RSE</th>
+                                            <th class="px-2 py-2">Postes</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        @php $total100 = 0; $total50 = 0; $totalTte = 0; @endphp
+                                        @foreach ($grilleRse as $jour)
+                                            @php
+                                                $formatMin = fn ($minutes) => $minutes === null ? '—' : intdiv($minutes, 60) . 'h' . str_pad($minutes % 60, 2, '0', STR_PAD_LEFT);
+                                                $total100 += $jour['heures_100_min'];
+                                                $total50 += $jour['heures_50_min'];
+                                                $totalTte += $jour['tte_min'];
+                                                $postesJour = $postesParJour->get(Carbon\Carbon::parse($jour['date'])->format('Y-m-d'), collect());
+                                            @endphp
+                                            <tr class="border-t border-slate-100">
+                                                <td class="px-2 py-2">{{ Carbon\Carbon::parse($jour['date'])->format('d/m/Y') }}</td>
+                                                <td class="px-2 py-2">{{ $formatMin($jour['heures_100_min']) }}</td>
+                                                <td class="px-2 py-2">{{ $formatMin($jour['heures_50_min']) }}</td>
+                                                <td class="px-2 py-2">{{ $formatMin($jour['tte_min']) }}</td>
+                                                <td class="px-2 py-2">{{ $formatMin($jour['amplitude_min']) }}</td>
+                                                <td class="px-2 py-2 @if($jour['relais_necessaire']) text-red-600 font-semibold @else text-slate-500 @endif">
+                                                    @if ($jour['relais_necessaire']) Relais nécessaire
+                                                    @else {{ $jour['statut'] }} @endif
+                                                </td>
+                                                <td class="px-2 py-2">
+                                                    @if($postesJour->isNotEmpty())
+                                                        <table class="text-xs w-full">
+                                                            @foreach($postesJour as $p)
+                                                                <tr>
+                                                                    <td class="py-0.5">{{ $p->type }}</td>
+                                                                    <td class="py-0.5">{{ $p->heure_debut ? substr($p->heure_debut, 0, 5) : '—' }}</td>
+                                                                    <td class="py-0.5">{{ $p->heure_fin ? substr($p->heure_fin, 0, 5) : '—' }}</td>
+                                                                    <td class="py-0.5">{{ $p->duree_min ? $formatMin($p->duree_min) : '—' }}</td>
+                                                                    <td class="py-0.5 text-right">
+                                                                        <button wire:click="supprimerPoste({{ $p->id }})" class="text-red-500 hover:text-red-700">×</button>
+                                                                    </td>
+                                                                </tr>
+                                                            @endforeach
+                                                        </table>
+                                                    @else
+                                                        <span class="text-slate-400">—</span>
+                                                    @endif
+                                                    <button wire:click="ouvrirAjoutPoste('{{ $jour['date'] }}')" class="mt-1 text-xs text-brand hover:underline">+ Ajouter</button>
+                                                    @if($editingPosteDate === $jour['date'])
+                                                        <div class="mt-1 p-2 bg-slate-50 rounded border">
+                                                            <select wire:model="poste_type" class="text-xs border rounded mb-1">
+                                                                <option value="prise_service">Prise</option>
+                                                                <option value="conduite">Conduite</option>
+                                                                <option value="attente">Attente</option>
+                                                                <option value="fin_service">Fin</option>
+                                                            </select>
+                                                            <input type="time" wire:model="poste_heure_debut" class="text-xs border rounded mb-1 w-full">
+                                                            <input type="time" wire:model="poste_heure_fin" class="text-xs border rounded mb-1 w-full">
+                                                            <select wire:model="poste_taux" class="text-xs border rounded mb-1">
+                                                                <option value="100">100%</option>
+                                                                <option value="50">50%</option>
+                                                            </select>
+                                                            <button wire:click="ajouterPoste" class="text-xs bg-brand text-white px-2 py-1 rounded">OK</button>
+                                                            <button wire:click="fermerAjoutPoste" class="text-xs text-slate-500 px-2 py-1">✕</button>
+                                                        </div>
+                                                    @endif
+                                                </td>
+                                            </tr>
+                                        @endforeach
+                                        <tr class="border-t-2 border-slate-300 font-semibold text-slate-800">
+                                            <td class="px-2 py-2">Cumul</td>
+                                            <td class="px-2 py-2">{{ $formatMin($total100) }}</td>
+                                            <td class="px-2 py-2">{{ $formatMin($total50) }}</td>
+                                            <td class="px-2 py-2">{{ $formatMin($totalTte) }}</td>
+                                            <td class="px-2 py-2" colspan="3"></td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                            <p class="mt-1 text-[11px] text-slate-400">100 % = conduite, 50 % = attente. Amplitude contrôlée à 13 h ; horaires incomplets à compléter.</p>
+                        @endif
+
+                        {{-- Surcharges manuelles km / durées (REQ-S-06, REQ-S-10) --}}
+                        @php $d = $devis; @endphp
+                        <div class="mt-4 rounded-lg border border-slate-200 p-3">
+                            <p class="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">Surcharges manuelles (km / durées)</p>
+                            <div class="grid gap-2 sm:grid-cols-3 text-xs">
+                                <div>
+                                    <label class="block text-slate-600">Distance (km)</label>
+                                    <input type="number" step="0.1" wire:model="edit_distance_km" value="{{ $d->distance_km }}" class="mt-1 w-full rounded border-slate-300 text-sm">
+                                    @if($d->original_distance_km !== null)<span class="text-slate-400">origine : {{ number_format($d->original_distance_km,2,',',' ') }}</span>@endif
+                                </div>
+                                <div>
+                                    <label class="block text-slate-600">Dont chargés (km)</label>
+                                    <input type="number" step="0.1" wire:model="edit_distance_km_charge" value="{{ $d->distance_km_charge }}" class="mt-1 w-full rounded border-slate-300 text-sm">
+                                    @if($d->original_distance_km_charge !== null)<span class="text-slate-400">origine : {{ number_format($d->original_distance_km_charge,2,',',' ') }}</span>@endif
+                                </div>
+                                <div>
+                                    <label class="block text-slate-600">Dont à vide (km)</label>
+                                    <input type="number" step="0.1" wire:model="edit_distance_km_vide" value="{{ $d->distance_km_vide }}" class="mt-1 w-full rounded border-slate-300 text-sm">
+                                    @if($d->original_distance_km_vide !== null)<span class="text-slate-400">origine : {{ number_format($d->original_distance_km_vide,2,',',' ') }}</span>@endif
+                                </div>
+                                <div>
+                                    <label class="block text-slate-600">Conduite (min)</label>
+                                    <input type="number" wire:model="edit_duree_conduite_minutes" value="{{ $d->duree_conduite_minutes }}" class="mt-1 w-full rounded border-slate-300 text-sm">
+                                    @if($d->original_duree_conduite_minutes !== null)<span class="text-slate-400">origine : {{ $d->original_duree_conduite_minutes }}</span>@endif
+                                </div>
+                                <div>
+                                    <label class="block text-slate-600">Attente (min)</label>
+                                    <input type="number" wire:model="edit_temps_attente_minutes" value="{{ $d->temps_attente_minutes }}" class="mt-1 w-full rounded border-slate-300 text-sm">
+                                    @if($d->original_temps_attente_minutes !== null)<span class="text-slate-400">origine : {{ $d->original_temps_attente_minutes }}</span>@endif
+                                </div>
+                                <div>
+                                    <label class="block text-slate-600">Raison (traçabilité)</label>
+                                    <input type="text" wire:model="override_raison" placeholder="Ex. ajustement client" class="mt-1 w-full rounded border-slate-300 text-sm">
+                                </div>
+                            </div>
+                            <div class="mt-2 flex gap-2">
+                                <button wire:click="appliquerOverride" class="rounded-lg bg-brand px-3 py-1.5 text-xs font-semibold text-white hover:bg-brand-dark">Appliquer</button>
+                                <button wire:click="reinitialiserOverride" class="rounded-lg border border-slate-300 px-3 py-1.5 text-xs text-slate-600 hover:bg-slate-50">Réinitialiser</button>
+                            </div>
+                            @if($d->override_author)
+                                <p class="mt-1 text-[10px] text-red-600">Override par {{ $d->override_author }} le {{ \Carbon\Carbon::parse($d->override_at)->format('d/m/Y H:i') }}</p>
+                            @endif
+                        </div>
+
+                        {{-- Détail poste par poste du temps de service (REQ-S-04) --}}
+                        @php $detailTS = $detail_temps_service; @endphp
+                        @if ($detailTS)
+                            <div class="mt-4 overflow-x-auto rounded-lg border border-slate-200">
+                                <table class="min-w-full text-xs">
+                                    <thead class="bg-slate-50 text-left text-slate-500">
+                                        <tr><th class="px-2 py-2">#</th><th>Poste</th><th>Date</th><th>Début</th><th>Fin</th><th>Durée</th><th>Taux</th></tr>
+                                    </thead>
+                                    <tbody>
+                                        @foreach ($detailTS as $poste)
+                                            <tr class="border-t border-slate-100">
+                                                <td class="px-2 py-2">{{ $poste['ordre'] }}</td>
+                                                <td class="px-2 py-2">{{ $poste['libelle'] }}</td>
+                                                <td class="px-2 py-2">{{ $poste['date'] }}</td>
+                                                <td class="px-2 py-2">{{ $poste['debut'] }}</td>
+                                                <td class="px-2 py-2">{{ $poste['fin'] }}</td>
+                                                <td class="px-2 py-2">{{ $poste['duree_min'] ? intdiv($poste['duree_min'],60).'h'.str_pad($poste['duree_min']%60,2,'0',STR_PAD_LEFT) : '—' }}</td>
+                                                <td class="px-2 py-2">{{ $poste['taux'] }}</td>
+                                            </tr>
+                                        @endforeach
+                                    </tbody>
+                                </table>
+                            </div>
+                            <p class="mt-1 text-[11px] text-slate-400">Temps de service poste par poste. 100 % = conduite effective, 50 % = attente / disponibilité. Document interne uniquement.</p>
+                        @endif
                         @php
                             $it   = $devis->calcul_payload['itineraire'] ?? [];
                             $par  = $devis->calcul_payload['parametres'] ?? [];
@@ -206,21 +435,45 @@
                             </div>
                         @endif
 
-                        <div class="flex justify-between pt-1"><span>Carburant</span><span>{{ $fmt($devis->cout_carburant) }} €</span></div>
+                        <div class="flex justify-between pt-1 items-center gap-2">
+                            <span>Carburant</span>
+                            <div class="flex items-center gap-2">
+                                <input type="number" step="0.01" wire:model="edit_cout_carburant" class="w-24 rounded border-slate-300 text-xs py-1" placeholder="{{ $fmt($devis->cout_carburant) }}">
+                                <span class="text-xs text-slate-500">{{ $fmt($devis->cout_carburant) }} €</span>
+                            </div>
+                        </div>
                         @if ($veh && !empty($par['prixGasoil']))
                             <p class="-mt-1 text-[11px] text-slate-400">{{ $fmt($veh->conso_l_100km, 1) }} L/100 km × {{ $fmt($devis->distance_km, 0) }} km × {{ $fmt($par['prixGasoil'], 3) }} €/L</p>
                         @endif
 
-                        <div class="flex justify-between"><span>Péage</span><span>{{ $fmt($devis->cout_peage) }} €</span></div>
+                        <div class="flex justify-between items-center gap-2">
+                            <span>Péage</span>
+                            <div class="flex items-center gap-2">
+                                <input type="number" step="0.01" wire:model="edit_cout_peage" class="w-24 rounded border-slate-300 text-xs py-1" placeholder="{{ $fmt($devis->cout_peage) }}">
+                                <span class="text-xs text-slate-500">{{ $fmt($devis->cout_peage) }} €</span>
+                            </div>
+                        </div>
                         @if ($kmPeage > 0 && $tarifKm > 0)
                             <p class="-mt-1 text-[11px] text-slate-400">{{ $fmt($kmPeage, 0) }} km à péage × {{ $fmt($tarifKm, 2) }} €/km @if($classe)(classe {{ $classe }})@endif</p>
                         @endif
 
-                        @if ($devis->cout_vignettes > 0)
-                            <div class="flex justify-between"><span>Vignettes</span><span>{{ $fmt($devis->cout_vignettes) }} €</span></div>
+                        @if ($devis->cout_vignettes > 0 || $edit_cout_vignettes !== null)
+                            <div class="flex justify-between items-center gap-2">
+                                <span>Vignettes</span>
+                                <div class="flex items-center gap-2">
+                                    <input type="number" step="0.01" wire:model="edit_cout_vignettes" class="w-24 rounded border-slate-300 text-xs py-1" placeholder="{{ $fmt($devis->cout_vignettes) }}">
+                                    <span class="text-xs text-slate-500">{{ $fmt($devis->cout_vignettes) }} €</span>
+                                </div>
+                            </div>
                         @endif
 
-                        <div class="flex justify-between"><span>Chauffeur</span><span>{{ $fmt($devis->cout_chauffeur) }} €</span></div>
+                        <div class="flex justify-between items-center gap-2">
+                            <span>Chauffeur</span>
+                            <div class="flex items-center gap-2">
+                                <input type="number" step="0.01" wire:model="edit_cout_chauffeur" class="w-24 rounded border-slate-300 text-xs py-1" placeholder="{{ $fmt($devis->cout_chauffeur) }}">
+                                <span class="text-xs text-slate-500">{{ $fmt($devis->cout_chauffeur) }} €</span>
+                            </div>
+                        </div>
                         @if (!empty($par['tauxChauffeur']))
                             <p class="-mt-1 text-[11px] text-slate-400">
                                 {{ $fmt($par['tauxChauffeur']) }} €/h × {{ $fmt($heuresCh, 1) }} h × {{ $devis->nb_chauffeurs }} chauffeur(s)
@@ -231,17 +484,36 @@
                             </p>
                         @endif
 
-                        <div class="flex justify-between"><span>Charges fixes</span><span>{{ $fmt($devis->cout_charges_fixes) }} €</span></div>
+                        <div class="flex justify-between items-center gap-2">
+                            <span>Charges fixes</span>
+                            <div class="flex items-center gap-2">
+                                <input type="number" step="0.01" wire:model="edit_cout_charges_fixes" class="w-24 rounded border-slate-300 text-xs py-1" placeholder="{{ $fmt($devis->cout_charges_fixes) }}">
+                                <span class="text-xs text-slate-500">{{ $fmt($devis->cout_charges_fixes) }} €</span>
+                            </div>
+                        </div>
                         @if ($veh)
                             <p class="-mt-1 text-[11px] text-slate-400">quote-part {{ $veh->libelle ?? 'véhicule' }} sur {{ $veh->jours_exploitation_an }} j/an @if(!empty($par['coefSaison']) && $par['coefSaison'] != 1) · coef. saison {{ $fmt($par['coefSaison'], 2) }}@endif</p>
                         @endif
 
-                        <div class="flex justify-between"><span>Charges variables</span><span>{{ $fmt($devis->cout_charges_variables) }} €</span></div>
+                        <div class="flex justify-between items-center gap-2">
+                            <span>Charges variables</span>
+                            <div class="flex items-center gap-2">
+                                <input type="number" step="0.01" wire:model="edit_cout_charges_variables" class="w-24 rounded border-slate-300 text-xs py-1" placeholder="{{ $fmt($devis->cout_charges_variables) }}">
+                                <span class="text-xs text-slate-500">{{ $fmt($devis->cout_charges_variables) }} €</span>
+                            </div>
+                        </div>
                         @if ($varKm > 0)
                             <p class="-mt-1 text-[11px] text-slate-400">{{ $fmt($varKm, 3) }} €/km (entretien, pneus, AdBlue…) × {{ $fmt($devis->distance_km, 0) }} km</p>
                         @endif
                         <div class="flex justify-between border-t border-slate-200 pt-2 font-semibold text-slate-800">
                             <span>Coût de revient HT</span><span>{{ number_format($devis->cout_revient_ht,2,',',' ') }} €</span>
+                        </div>
+                        @if($d->override_author)
+                            <p class="mt-1 text-[10px] text-red-600">Override coûts par {{ $d->override_author }} le {{ \Carbon\Carbon::parse($d->override_at)->format('d/m/Y H:i') }}</p>
+                        @endif
+                        <div class="mt-2 flex gap-2">
+                            <button wire:click="appliquerOverrideCouts" class="rounded-lg bg-brand px-3 py-1.5 text-xs font-semibold text-white hover:bg-brand-dark">Appliquer les coûts</button>
+                            <button wire:click="reinitialiserOverrideCouts" class="rounded-lg border border-slate-300 px-3 py-1.5 text-xs text-slate-600 hover:bg-slate-50">Réinitialiser coûts</button>
                         </div>
                     </div>
 
@@ -325,9 +597,8 @@
                             🗺️ Ouvrir sur la carte
                         </a>
                         @if ($devis->statut === 'brouillon')
-                            {{-- Devis pas encore validé : on explique au lieu de laisser un lien sans effet. --}}
                             <button type="button" wire:click="pdfAvantValidation"
-                                    title="Validez le devis pour pouvoir l’éditer"
+                                    title="Validez le devis pour pouvoir l'éditer"
                                     class="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-4 py-2 text-sm font-medium text-slate-400 hover:bg-slate-50">
                                 📄 Devis PDF 🔒
                             </button>
@@ -335,6 +606,16 @@
                             <a href="{{ route('admin.devis.pdf', $devis) }}" target="_blank"
                                class="inline-flex items-center gap-1 rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
                                 📄 Devis PDF
+                            </a>
+                        @endif
+                        @if ($devis->cout_revient_ht > 0)
+                            <a href="{{ route('admin.devis.interne', $devis) }}" target="_blank"
+                               class="inline-flex items-center gap-1 rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+                                📄 Document interne
+                            </a>
+                            <a href="{{ route('admin.devis.csv', $devis) }}"
+                               class="inline-flex items-center gap-1 rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+                                📥 CSV
                             </a>
                         @endif
                         @if ($devis->statut === 'brouillon')

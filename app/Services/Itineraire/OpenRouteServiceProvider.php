@@ -4,6 +4,7 @@ namespace App\Services\Itineraire;
 
 use App\Models\Parametre;
 use App\Models\Vehicule;
+use App\Services\ApiTracker;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\RequestException;
 use Illuminate\Http\Client\Response;
@@ -24,9 +25,7 @@ class OpenRouteServiceProvider implements ItineraireProvider
     /** Nombre total de tentatives (budget de temps volontairement court, cf. calculer()). */
     private const TENTATIVES = 2;
 
-    public function __construct(private readonly string $apiKey)
-    {
-    }
+    public function __construct(private readonly string $apiKey, private readonly ApiTracker $tracker) {}
 
     /** Message clair pour la secrétaire (jamais le HTML brut renvoyé par le serveur). */
     protected function messageErreur(Response $resp): string
@@ -34,8 +33,8 @@ class OpenRouteServiceProvider implements ItineraireProvider
         $statut = $resp->status();
 
         if ($resp->serverError()) {
-            return "OpenRouteService est momentanément indisponible (erreur $statut) après " . self::TENTATIVES . ' tentatives. '
-                . 'Ce n’est pas un problème de votre demande : réessayez dans quelques minutes.';
+            return "OpenRouteService est momentanément indisponible (erreur $statut) après ".self::TENTATIVES.' tentatives. '
+                .'Ce n’est pas un problème de votre demande : réessayez dans quelques minutes.';
         }
 
         if (in_array($statut, [401, 403], true)) {
@@ -50,19 +49,31 @@ class OpenRouteServiceProvider implements ItineraireProvider
         $detail = data_get($resp->json(), 'error.message')
             ?? trim(preg_replace('/\s+/', ' ', strip_tags((string) $resp->body())));
 
-        return "OpenRouteService a refusé le calcul (erreur $statut) : " . mb_strimwidth((string) $detail, 0, 200, '…');
+        return "OpenRouteService a refusé le calcul (erreur $statut) : ".mb_strimwidth((string) $detail, 0, 200, '…');
     }
 
     public function calculer(array $points, int $indexPriseEnCharge, int $indexDepose, Vehicule $vehicule): ResultatItineraire
     {
-        // ORS attend les coordonnées en [longitude, latitude].
         $coordinates = array_map(fn ($p) => [$p['lng'], $p['lat']], $points);
 
-        // Pannes passagères d'ORS (502/503/504, coupures) : on réessaie une fois.
-        // ⚠️ Le budget total doit rester COURT : au-delà, PHP tue la requête et
-        // l'écran resterait bloqué sans résultat ni erreur.
-        // Pire cas ≈ 2 × (5 s connexion + 20 s réponse) + 0,5 s ≈ 45 s.
+        $options = [];
+        if (Parametre::get('itineraire_eviter_peage', false)) {
+            $options[] = 'tollways';
+        }
+        if (Parametre::get('itineraire_eviter_autoroute', false)) {
+            $options[] = 'highways';
+        }
+
+        $payload = [
+            'coordinates' => $coordinates,
+            'extra_info' => ['tollways'],
+        ];
+        if ($options !== []) {
+            $payload['options'] = ['avoid_features' => $options];
+        }
+
         try {
+            $debut = microtime(true);
             $resp = Http::withHeaders(['Authorization' => $this->apiKey])
                 ->connectTimeout(5)
                 ->timeout(20)
@@ -70,37 +81,38 @@ class OpenRouteServiceProvider implements ItineraireProvider
                     return $exception instanceof ConnectionException
                         || ($exception instanceof RequestException && $exception->response->serverError());
                 }, throw: false)
-                ->post(self::URL, [
-                    'coordinates' => $coordinates,
-                    'extra_info'  => ['tollways'],   // segments d'autoroute à péage
-                ]);
+                ->post(self::URL, $payload);
+            $duree = (int) round((microtime(true) - $debut) * 1000);
         } catch (ConnectionException $e) {
+            $this->tracker->log('ors', self::URL, null, false, null, null);
             throw new RuntimeException(
-                'OpenRouteService ne répond pas (délai dépassé, ' . self::TENTATIVES . ' tentatives). '
-                . 'Leur service est probablement en panne : réessayez dans quelques minutes.'
+                'OpenRouteService ne répond pas (délai dépassé, '.self::TENTATIVES.' tentatives). '
+                .'Leur service est probablement en panne : réessayez dans quelques minutes.'
             );
         }
 
         if (! $resp->ok()) {
+            $this->tracker->log('ors', self::URL, null, false, $duree, $resp->status());
             throw new RuntimeException($this->messageErreur($resp));
         }
 
         $json = $resp->json();
         $segments = data_get($json, 'routes.0.segments');
         if (! $segments) {
+            $this->tracker->log('ors', self::URL, null, false, $duree, 200);
             throw new RuntimeException('Aucun itinéraire renvoyé par OpenRouteService.');
         }
 
         $distanceTotaleM = 0.0;
         $distanceChargeM = 0.0;
-        $distanceVideM   = 0.0;
-        $dureeSecondes   = 0.0;
+        $distanceVideM = 0.0;
+        $dureeSecondes = 0.0;
 
         foreach ($segments as $i => $segment) {
             $lenM = (float) data_get($segment, 'distance', 0);
-            $dur  = (float) data_get($segment, 'duration', 0);
+            $dur = (float) data_get($segment, 'duration', 0);
             $distanceTotaleM += $lenM;
-            $dureeSecondes   += $dur;
+            $dureeSecondes += $dur;
 
             if ($i >= $indexPriseEnCharge && $i < $indexDepose) {
                 $distanceChargeM += $lenM;
@@ -144,12 +156,12 @@ class OpenRouteServiceProvider implements ItineraireProvider
             coutVignettes: 0.0,
             source: 'ors',
             payload: [
-                'profil'         => 'driving-hgv',
-                'km_a_peage'     => $kmPeage,
-                'classe_peage'   => $vehicule->classe_peage,
+                'profil' => 'driving-hgv',
+                'km_a_peage' => $kmPeage,
+                'classe_peage' => $vehicule->classe_peage,
                 'tarif_peage_km' => $tarifKm,
-                'geometry'       => $geometry,   // polyline encodée (lat,lng)
-                'tollways'       => $tollways,   // tronçons : [début, fin, 1=péage]
+                'geometry' => $geometry,
+                'tollways' => $tollways,
             ],
         );
     }

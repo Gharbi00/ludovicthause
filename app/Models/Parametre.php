@@ -35,8 +35,8 @@ class Parametre extends Model
             'integer' => (int) $parametre->valeur,
             'decimal' => (float) $parametre->valeur,
             'boolean' => filter_var($parametre->valeur, FILTER_VALIDATE_BOOLEAN),
-            'json'    => json_decode($parametre->valeur, true),
-            default   => $parametre->valeur,
+            'json' => json_decode($parametre->valeur, true),
+            default => $parametre->valeur,
         };
     }
 

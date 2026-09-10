@@ -41,33 +41,46 @@ class Devis extends Model
         'pdf_path',
         'calcul_payload',
         'lignes_libres',
+        'original_distance_km',
+        'original_distance_km_charge',
+        'original_distance_km_vide',
+        'original_duree_conduite_minutes',
+        'original_temps_attente_minutes',
+        'override_author',
+        'override_at',
     ];
 
     protected function casts(): array
     {
         return [
-            'distance_km'            => 'decimal:2',
-            'distance_km_charge'     => 'decimal:2',
-            'distance_km_vide'       => 'decimal:2',
+            'distance_km' => 'decimal:2',
+            'distance_km_charge' => 'decimal:2',
+            'distance_km_vide' => 'decimal:2',
             'duree_conduite_minutes' => 'integer',
-            'temps_attente_minutes'  => 'integer',
-            'nb_chauffeurs'          => 'integer',
-            'nb_nuitees'             => 'integer',
-            'cout_carburant'         => 'decimal:2',
-            'cout_peage'             => 'decimal:2',
-            'cout_vignettes'         => 'decimal:2',
-            'cout_chauffeur'         => 'decimal:2',
-            'cout_charges_fixes'     => 'decimal:2',
+            'temps_attente_minutes' => 'integer',
+            'nb_chauffeurs' => 'integer',
+            'nb_nuitees' => 'integer',
+            'cout_carburant' => 'decimal:2',
+            'cout_peage' => 'decimal:2',
+            'cout_vignettes' => 'decimal:2',
+            'cout_chauffeur' => 'decimal:2',
+            'cout_charges_fixes' => 'decimal:2',
             'cout_charges_variables' => 'decimal:2',
-            'cout_revient_ht'        => 'decimal:2',
-            'marge_taux'             => 'decimal:2',
-            'montant_ht'             => 'decimal:2',
-            'taux_tva'               => 'decimal:2',
-            'montant_tva'            => 'decimal:2',
-            'montant_ttc'            => 'decimal:2',
-            'marge_montant'          => 'decimal:2',
-            'calcul_payload'         => 'array',
-            'lignes_libres'          => 'array',
+            'cout_revient_ht' => 'decimal:2',
+            'marge_taux' => 'decimal:2',
+            'montant_ht' => 'decimal:2',
+            'taux_tva' => 'decimal:2',
+            'montant_tva' => 'decimal:2',
+            'montant_ttc' => 'decimal:2',
+            'marge_montant' => 'decimal:2',
+            'calcul_payload' => 'array',
+            'lignes_libres' => 'array',
+            'original_distance_km' => 'decimal:2',
+            'original_distance_km_charge' => 'decimal:2',
+            'original_distance_km_vide' => 'decimal:2',
+            'original_duree_conduite_minutes' => 'integer',
+            'original_temps_attente_minutes' => 'integer',
+            'override_at' => 'datetime',
         ];
     }
 
@@ -85,13 +98,13 @@ class Devis extends Model
     {
         $htTransport = (float) $this->cout_revient_ht * (1 + (float) $this->marge_taux / 100);
         $supplements = $this->totalLignesLibres();
-        $ht  = $htTransport + $supplements;
+        $ht = $htTransport + $supplements;
         $tva = $ht * (float) $this->taux_tva / 100;
 
         $this->update([
-            'montant_ht'    => round($ht, 2),
-            'montant_tva'   => round($tva, 2),
-            'montant_ttc'   => round($ht + $tva, 2),
+            'montant_ht' => round($ht, 2),
+            'montant_tva' => round($tva, 2),
+            'montant_ttc' => round($ht + $tva, 2),
             'marge_montant' => round($htTransport - (float) $this->cout_revient_ht, 2),
         ]);
     }
@@ -109,5 +122,10 @@ class Devis extends Model
     public function planning(): HasMany
     {
         return $this->hasMany(Planning::class);
+    }
+
+    public function postes(): HasMany
+    {
+        return $this->hasMany(Poste::class);
     }
 }

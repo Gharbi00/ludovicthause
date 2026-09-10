@@ -18,6 +18,13 @@ class Etape extends Model
         'commune_id',
         'ville',
         'adresse',
+        'lieu_libelle',
+        'adresse_normalisee',
+        'geocodage_source',
+        'geocodage_provider_id',
+        'lieu_acces',
+        'lieu_contact',
+        'lieu_commentaire',
         'latitude',
         'longitude',
         'date',
@@ -31,12 +38,12 @@ class Etape extends Model
     protected function casts(): array
     {
         return [
-            'ordre'                 => 'integer',
-            'latitude'              => 'decimal:7',
-            'longitude'             => 'decimal:7',
-            'date'                  => 'date',
-            'arrivee_imperative'    => 'boolean',
-            'depart_imperatif'      => 'boolean',
+            'ordre' => 'integer',
+            'latitude' => 'decimal:7',
+            'longitude' => 'decimal:7',
+            'date' => 'date',
+            'arrivee_imperative' => 'boolean',
+            'depart_imperatif' => 'boolean',
             'temps_attente_minutes' => 'integer',
         ];
     }

@@ -22,14 +22,14 @@ class DatabaseSeeder extends Seeder
 
         // Comptes de démonstration (mot de passe : « password » — À CHANGER en prod)
         User::factory()->create([
-            'name'  => 'Secrétaire LTT',
+            'name' => 'Secrétaire LTT',
             'email' => 'secretaire@ludovicthause.fr',
-            'role'  => 'secretaire',
+            'role' => 'secretaire',
         ]);
         User::factory()->create([
-            'name'  => 'Admin LTT',
+            'name' => 'Admin LTT',
             'email' => 'admin@ludovicthause.fr',
-            'role'  => 'admin',
+            'role' => 'admin',
         ]);
     }
 }

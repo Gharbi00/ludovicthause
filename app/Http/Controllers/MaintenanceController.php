@@ -2,7 +2,13 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\Commune;
+use App\Models\Parametre;
 use App\Models\User;
+use App\Models\Vehicule;
+use App\Services\Itineraire\HereItineraireProvider;
+use App\Services\Itineraire\OpenRouteServiceProvider;
+use App\Services\TransportMail;
 use Database\Seeders\CategorieSeeder;
 use Database\Seeders\CommuneDemoSeeder;
 use Database\Seeders\ParametreSeeder;
@@ -10,6 +16,7 @@ use Database\Seeders\VehiculeReelSeeder;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Mail;
 
 /**
  * Maintenance à distance sur l'hébergement mutualisé (pas de PHP en ligne de commande).
@@ -27,14 +34,14 @@ class MaintenanceController extends Controller
         abort_unless(is_string($request->query('token')) && hash_equals($attendu, $request->query('token')), 404);
 
         return match ($action) {
-            'migrate'         => $this->migrate(),
-            'seed-demo'       => $this->seedDemo(),
+            'migrate' => $this->migrate(),
+            'seed-demo' => $this->seedDemo(),
             'import-communes' => $this->importCommunes(),
-            'gasoil'          => $this->gasoil(),
-            'here-test'       => $this->itineraireTest('here'),
-            'ors-test'        => $this->itineraireTest('ors'),
-            'test-email'      => $this->testEmail($request),
-            default           => abort(404),
+            'gasoil' => $this->gasoil(),
+            'here-test' => $this->itineraireTest('here'),
+            'ors-test' => $this->itineraireTest('ors'),
+            'test-email' => $this->testEmail($request),
+            default => abort(404),
         };
     }
 
@@ -42,60 +49,60 @@ class MaintenanceController extends Controller
     {
         Artisan::call('migrate', ['--force' => true]);
 
-        return response('<pre>' . e(Artisan::output()) . '</pre>');
+        return response('<pre>'.e(Artisan::output()).'</pre>');
     }
 
     protected function gasoil()
     {
         Artisan::call('gasoil:actualiser');
 
-        return response('<pre>' . e(Artisan::output()) . '</pre>');
+        return response('<pre>'.e(Artisan::output()).'</pre>');
     }
 
     /** Diagnostic e-mail : affiche le mailer actif et tente un envoi réel (?to=adresse). */
     protected function testEmail(Request $request)
     {
         $to = (string) $request->query('to');
-        $out = 'MAIL_MAILER (config) = ' . config('mail.default') . "\n";
-        $out .= 'MAIL_SENDMAIL_PATH = ' . config('mail.mailers.sendmail.path', '(défaut)') . "\n";
-        $configuree = (string) \App\Models\Parametre::get('email_from_address', 'contact@doliexpert.fr');
-        $from = \App\Services\TransportMail::adresseExpediteur();
-        $out .= 'Expéditeur (configuré) = ' . $configuree . "\n";
-        $out .= 'Expéditeur (réel, aligné SMTP) = ' . $from . "\n\n";
+        $out = 'MAIL_MAILER (config) = '.config('mail.default')."\n";
+        $out .= 'MAIL_SENDMAIL_PATH = '.config('mail.mailers.sendmail.path', '(défaut)')."\n";
+        $configuree = (string) Parametre::get('email_from_address', 'contact@doliexpert.fr');
+        $from = TransportMail::adresseExpediteur();
+        $out .= 'Expéditeur (configuré) = '.$configuree."\n";
+        $out .= 'Expéditeur (réel, aligné SMTP) = '.$from."\n\n";
 
         if (! filter_var($to, FILTER_VALIDATE_EMAIL)) {
-            return response('<pre>' . e($out . "Ajoutez ?to=votre@email.fr pour tester un envoi réel.") . '</pre>');
+            return response('<pre>'.e($out.'Ajoutez ?to=votre@email.fr pour tester un envoi réel.').'</pre>');
         }
 
         // Transport : ?via=... force un mode, sinon celui configuré (paramètres).
-        $transport = $request->query('via') ?: \App\Services\TransportMail::resoudre();
+        $transport = $request->query('via') ?: TransportMail::resoudre();
         try {
-            \Illuminate\Support\Facades\Mail::mailer($transport)->raw(
-                "Test d'envoi depuis l'application LTT (" . now()->format('d/m/Y H:i') . ").",
+            Mail::mailer($transport)->raw(
+                "Test d'envoi depuis l'application LTT (".now()->format('d/m/Y H:i').').',
                 function ($m) use ($to, $from) {
                     $m->to($to)->from($from, 'LTT test')->subject('Test envoi — LTT');
                 }
             );
             $out .= "Envoi via '$transport' : OK (aucune exception). Vérifiez la réception ET les spams de $to.";
         } catch (\Throwable $e) {
-            $out .= "ERREUR (via '$transport') : " . $e->getMessage();
+            $out .= "ERREUR (via '$transport') : ".$e->getMessage();
         }
 
-        return response('<pre>' . e($out) . '</pre>');
+        return response('<pre>'.e($out).'</pre>');
     }
 
     /** Diagnostic routage : teste un trajet réel (Varennes-Vauzelles → Paris → retour). */
     protected function itineraireTest(string $fournisseur)
     {
         $cleParam = $fournisseur === 'here' ? 'here_api_key' : 'ors_api_key';
-        $cle = \App\Models\Parametre::get($cleParam);
+        $cle = Parametre::get($cleParam);
         if (empty($cle)) {
-            return response('<pre>Aucune clé ' . strtoupper($fournisseur) . ' renseignée (Réglages → Clés d\'API).</pre>');
+            return response('<pre>Aucune clé '.strtoupper($fournisseur).' renseignée (Réglages → Clés d\'API).</pre>');
         }
 
-        $depot = \App\Models\Commune::where('code_insee', '58303')->first();
-        $paris = \App\Models\Commune::where('nom', 'Paris')->orderBy('code_postal')->first();
-        $veh   = \App\Models\Vehicule::where('actif', true)->orderByDesc('nb_places')->first();
+        $depot = Commune::where('code_insee', '58303')->first();
+        $paris = Commune::where('nom', 'Paris')->orderBy('code_postal')->first();
+        $veh = Vehicule::where('actif', true)->orderByDesc('nb_places')->first();
 
         if (! $depot || ! $paris || ! $veh) {
             return response('<pre>Données manquantes (dépôt / Paris / véhicule).</pre>');
@@ -108,24 +115,24 @@ class MaintenanceController extends Controller
         ];
 
         $provider = $fournisseur === 'here'
-            ? new \App\Services\Itineraire\HereItineraireProvider($cle)
-            : new \App\Services\Itineraire\OpenRouteServiceProvider($cle);
+            ? new HereItineraireProvider($cle)
+            : new OpenRouteServiceProvider($cle);
 
         try {
             $r = $provider->calculer($points, 1, 2, $veh);
             $kmPeage = $r->payload['km_a_peage'] ?? null;
             $tarif = $r->payload['tarif_peage_km'] ?? null;
-            $out = strtoupper($fournisseur) . " OK ✓\n"
-                . "Véhicule : {$veh->immatriculation} ({$veh->nb_essieux} essieux, classe " . $veh->classe_peage . ")\n"
-                . "Distance : {$r->distanceKm} km (chargé {$r->distanceKmCharge} / vide {$r->distanceKmVide})\n"
-                . "Durée : {$r->dureeConduiteMinutes} min (" . intdiv($r->dureeConduiteMinutes, 60) . 'h' . str_pad($r->dureeConduiteMinutes % 60, 2, '0', STR_PAD_LEFT) . ")\n"
-                . ($kmPeage !== null ? "Km à péage : {$kmPeage} km × {$tarif} €/km\n" : '')
-                . "Péage : {$r->coutPeage} € · Vignettes : {$r->coutVignettes} € · source={$r->source}";
+            $out = strtoupper($fournisseur)." OK ✓\n"
+                ."Véhicule : {$veh->immatriculation} ({$veh->nb_essieux} essieux, classe ".$veh->classe_peage.")\n"
+                ."Distance : {$r->distanceKm} km (chargé {$r->distanceKmCharge} / vide {$r->distanceKmVide})\n"
+                ."Durée : {$r->dureeConduiteMinutes} min (".intdiv($r->dureeConduiteMinutes, 60).'h'.str_pad($r->dureeConduiteMinutes % 60, 2, '0', STR_PAD_LEFT).")\n"
+                .($kmPeage !== null ? "Km à péage : {$kmPeage} km × {$tarif} €/km\n" : '')
+                ."Péage : {$r->coutPeage} € · Vignettes : {$r->coutVignettes} € · source={$r->source}";
         } catch (\Throwable $e) {
-            $out = strtoupper($fournisseur) . " ERREUR : " . $e->getMessage();
+            $out = strtoupper($fournisseur).' ERREUR : '.$e->getMessage();
         }
 
-        return response('<pre>' . e($out) . '</pre>');
+        return response('<pre>'.e($out).'</pre>');
     }
 
     protected function importCommunes()
@@ -133,7 +140,7 @@ class MaintenanceController extends Controller
         @set_time_limit(300);
         Artisan::call('communes:import');
 
-        return response('<pre>' . e(Artisan::output()) . '</pre>');
+        return response('<pre>'.e(Artisan::output()).'</pre>');
     }
 
     protected function seedDemo()
@@ -156,6 +163,6 @@ class MaintenanceController extends Controller
         }
 
         return response('<pre>Seed démo OK. '
-            . 'Catégories, communes, véhicules et comptes en place (sans écraser les demandes existantes).</pre>');
+            .'Catégories, communes, véhicules et comptes en place (sans écraser les demandes existantes).</pre>');
     }
 }

@@ -31,9 +31,9 @@ class Journal extends Model
         try {
             static::create([
                 'utilisateur' => $utilisateur ?? Auth::user()?->name ?? '—',
-                'action'      => $action,
-                'details'     => $details,
-                'ip'          => request()->ip(),
+                'action' => $action,
+                'details' => $details,
+                'ip' => request()->ip(),
             ]);
         } catch (\Throwable $e) {
             report($e);

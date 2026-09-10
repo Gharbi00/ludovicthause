@@ -39,9 +39,9 @@ class GeocodageBan
                 continue;
             }
             $out[] = [
-                'label'    => (string) data_get($f, 'properties.label'),
-                'lat'      => (float) $coords[1],
-                'lng'      => (float) $coords[0],
+                'label' => (string) data_get($f, 'properties.label'),
+                'lat' => (float) $coords[1],
+                'lng' => (float) $coords[0],
                 'citycode' => data_get($f, 'properties.citycode'),
                 'contexte' => data_get($f, 'properties.context'),
             ];

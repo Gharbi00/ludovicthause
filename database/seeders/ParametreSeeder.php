@@ -38,6 +38,9 @@ class ParametreSeeder extends Seeder
             ['cle' => 'rse_conduite_avant_pause_min',     'valeur' => '270', 'type' => 'integer', 'groupe' => 'rse', 'libelle' => 'Conduite avant pause obligatoire (min) — 4h30'],
             ['cle' => 'rse_duree_pause_min',              'valeur' => '45',  'type' => 'integer', 'groupe' => 'rse', 'libelle' => 'Durée pause (min) — fractionnable 15+30'],
             ['cle' => 'rse_repos_journalier_min',         'valeur' => '660', 'type' => 'integer', 'groupe' => 'rse', 'libelle' => 'Repos journalier (min) — 11h'],
+            ['cle' => 'rse_amplitude_max_min',            'valeur' => '780', 'type' => 'integer', 'groupe' => 'rse', 'libelle' => 'Amplitude max (min) — 13h'],
+            ['cle' => 'rse_tte_max_min',                  'valeur' => '900', 'type' => 'integer', 'groupe' => 'rse', 'libelle' => 'TTE max journalier (min) — 15h'],
+            ['cle' => 'rse_taux_temps_disposition',       'valeur' => '50',  'type' => 'integer', 'groupe' => 'rse', 'libelle' => 'Taux temps à disposition (%) — 50% par défaut'],
 
             // --- Clés API (à renseigner en réglages) ---
             ['cle' => 'here_api_key',      'valeur' => '', 'type' => 'string', 'groupe' => 'api', 'libelle' => 'Clé API HERE (routage + péage ; carte bancaire requise à l\'inscription)'],
@@ -45,10 +48,17 @@ class ParametreSeeder extends Seeder
             ['cle' => 'tollguru_api_key',  'valeur' => '', 'type' => 'string', 'groupe' => 'api', 'libelle' => 'Clé API TollGuru (repli péage)'],
             ['cle' => 'peage_provider',    'valeur' => 'here', 'type' => 'string', 'groupe' => 'api', 'libelle' => 'Fournisseur de péage actif : here | tollguru'],
 
+            // --- Itinéraire ---
+            ['cle' => 'itineraire_eviter_peage',      'valeur' => '0', 'type' => 'boolean', 'groupe' => 'itineraire', 'libelle' => 'Éviter les autoroutes à péage'],
+            ['cle' => 'itineraire_eviter_autoroute',  'valeur' => '0', 'type' => 'boolean', 'groupe' => 'itineraire', 'libelle' => 'Éviter toutes les autoroutes'],
+            ['cle' => 'api_plafond_mensuel',          'valeur' => '10000', 'type' => 'integer', 'groupe' => 'api', 'libelle' => 'Plafond mensuel d\'appels API (tous fournisseurs confondus)'],
+            ['cle' => 'api_alerte_email',             'valeur' => '', 'type' => 'string', 'groupe' => 'api', 'libelle' => 'E-mail d\'alerte pour le plafond API (laisser vide pour désactiver)'],
+
             // --- E-mail de confirmation (accusé de réception client) ---
             ['cle' => 'email_confirmation_active', 'valeur' => '1', 'type' => 'boolean', 'groupe' => 'email', 'libelle' => 'Envoyer un e-mail de confirmation au client'],
             ['cle' => 'email_from_address',        'valeur' => 'contact@doliexpert.fr', 'type' => 'string', 'groupe' => 'email', 'libelle' => 'Adresse e-mail expéditeur'],
             ['cle' => 'email_from_nom',            'valeur' => 'Ludovic Thause Tourisme', 'type' => 'string', 'groupe' => 'email', 'libelle' => 'Nom expéditeur'],
+            ['cle' => 'email_secretariat',         'valeur' => 'contact@doliexpert.fr', 'type' => 'string', 'groupe' => 'email', 'libelle' => 'Adresse de notification du secrétariat'],
             ['cle' => 'email_confirmation_sujet',  'valeur' => 'Votre demande de devis — Ludovic Thause Tourisme', 'type' => 'string', 'groupe' => 'email', 'libelle' => 'Objet de l\'e-mail'],
             ['cle' => 'email_confirmation_corps',  'valeur' => "Bonjour {nom},\n\nNous vous remercions de nous avoir consultés pour votre projet de transport.\n\nVotre demande (référence {reference}) a bien été enregistrée. Notre équipe l'étudie et vous fera parvenir votre devis dans les plus brefs délais.\n\nCordialement,\nL'équipe Ludovic Thause Tourisme", 'type' => 'string', 'groupe' => 'email', 'libelle' => 'Texte de l\'e-mail (variables : {nom}, {reference})'],
 
@@ -82,8 +92,8 @@ class ParametreSeeder extends Seeder
                 // Ne JAMAIS écraser une valeur déjà saisie (clés API, réglages…).
                 // On rafraîchit seulement les métadonnées (type, groupe, libellé).
                 $existant->update([
-                    'type'    => $p['type'],
-                    'groupe'  => $p['groupe'],
+                    'type' => $p['type'],
+                    'groupe' => $p['groupe'],
                     'libelle' => $p['libelle'],
                 ]);
             } else {

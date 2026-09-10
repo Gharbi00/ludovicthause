@@ -17,6 +17,7 @@ class ImportCommunes extends Command
 
         if (! is_file($fichier)) {
             $this->error("Fichier introuvable : $fichier");
+
             return self::FAILURE;
         }
 
@@ -34,12 +35,12 @@ class ImportCommunes extends Command
             }
 
             $lot[] = [
-                'code_insee'    => $insee,
-                'nom'           => $nom,
+                'code_insee' => $insee,
+                'nom' => $nom,
                 'nom_normalise' => Commune::normaliser($nom),
-                'code_postal'   => $cp ?: null,
-                'latitude'      => $lat !== '' ? $lat : null,
-                'longitude'     => $lng !== '' ? $lng : null,
+                'code_postal' => $cp ?: null,
+                'latitude' => $lat !== '' ? $lat : null,
+                'longitude' => $lng !== '' ? $lng : null,
             ];
 
             if (count($lot) >= $taille) {
@@ -56,7 +57,7 @@ class ImportCommunes extends Command
 
         fclose($handle);
 
-        $this->info("Import terminé : $total communes (total en base : " . Commune::count() . ').');
+        $this->info("Import terminé : $total communes (total en base : ".Commune::count().').');
 
         return self::SUCCESS;
     }

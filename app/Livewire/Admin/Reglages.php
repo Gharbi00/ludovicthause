@@ -12,7 +12,9 @@ class Reglages extends Component
 {
     /** @var array<string,string|null> cle => valeur */
     public array $valeurs = [];
+
     public ?string $flash = null;
+
     public ?string $gasoilInfo = null;
 
     public function mount(): void
@@ -38,7 +40,7 @@ class Reglages extends Component
             $this->valeurs['prix_gasoil_litre'] = (string) $prix;
             $this->gasoilInfo = "Prix du gasoil actualisé : {$prix} €/L (moyenne nationale du jour).";
         } else {
-            $this->gasoilInfo = "Impossible de récupérer le prix (API indisponible).";
+            $this->gasoilInfo = 'Impossible de récupérer le prix (API indisponible).';
         }
     }
 
@@ -51,12 +53,12 @@ class Reglages extends Component
             $groupes = ['pdf' => 'Devis PDF'];
         } else {
             $groupes = [
-                'calcul'    => 'Calcul & fiscalité',
+                'calcul' => 'Calcul & fiscalité',
                 'structure' => 'Structure & chauffeur',
                 'carburant' => 'Carburant',
-                'peage'     => 'Péage (tarifs au km sur autoroute)',
-                'rse'       => 'Réglementation sociale (RSE)',
-                'api'       => "Clés d'API",
+                'peage' => 'Péage (tarifs au km sur autoroute)',
+                'rse' => 'Réglementation sociale (RSE)',
+                'api' => "Clés d'API",
             ];
         }
 
@@ -64,7 +66,7 @@ class Reglages extends Component
 
         return view('livewire.admin.reglages', [
             'groupes' => $groupes,
-            'params'  => $params,
+            'params' => $params,
         ]);
     }
 }

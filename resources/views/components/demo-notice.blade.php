@@ -1,10 +1,10 @@
-@props(['area' => 'public'])
+<!-- @props(['area' => 'public'])
 
 <div id="demo-notice" style="display:none" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
     <div class="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
         <div class="flex items-center gap-3">
             <span class="text-2xl">🔧</span>
-            <h2 class="text-lg font-semibold text-slate-900">Version de démonstration</h2>
+            <h2 class="text-lg font-semibold text-slate-900">Version de démonstration </h2>
         </div>
         <p class="mt-3 text-sm text-slate-600">
             Cette application est une <strong>démonstration</strong>. Elle est pleinement fonctionnelle,
@@ -37,3 +37,4 @@
         };
     })();
 </script>
+ -->

@@ -16,6 +16,5 @@ class ResultatItineraire
         public readonly float $coutVignettes,
         public readonly string $source,           // 'estimation' | 'here' | ...
         public readonly array $payload = [],       // trace brute (réponses API, segments…)
-    ) {
-    }
+    ) {}
 }

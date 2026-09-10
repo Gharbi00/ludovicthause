@@ -19,12 +19,12 @@ class TransportMail
 
         if ($transport === 'smtp') {
             config([
-                'mail.mailers.smtp.host'       => (string) Parametre::get('smtp_host'),
-                'mail.mailers.smtp.port'       => (int) Parametre::get('smtp_port', 465),
-                'mail.mailers.smtp.username'   => (string) Parametre::get('smtp_username'),
-                'mail.mailers.smtp.password'   => (string) Parametre::get('smtp_password'),
+                'mail.mailers.smtp.host' => (string) Parametre::get('smtp_host'),
+                'mail.mailers.smtp.port' => (int) Parametre::get('smtp_port', 465),
+                'mail.mailers.smtp.username' => (string) Parametre::get('smtp_username'),
+                'mail.mailers.smtp.password' => (string) Parametre::get('smtp_password'),
                 'mail.mailers.smtp.encryption' => (string) Parametre::get('smtp_encryption', 'ssl'),
-                'mail.mailers.smtp.timeout'    => 15,
+                'mail.mailers.smtp.timeout' => 15,
             ]);
 
             return 'smtp';

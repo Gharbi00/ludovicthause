@@ -7,6 +7,39 @@
         <div class="mb-4 rounded-lg bg-green-50 p-3 text-sm text-green-700 ring-1 ring-green-200">{{ $flash }}</div>
     @endif
 
+    <section class="mb-6 rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200">
+        <div class="flex items-center justify-between gap-3">
+            <h2 class="text-sm font-semibold uppercase tracking-wide text-slate-400">Catégories de véhicules</h2>
+            <button wire:click="nouvelleCategorie" class="rounded-lg bg-brand px-3 py-2 text-xs font-semibold text-white hover:bg-brand-dark">Ajouter une catégorie</button>
+        </div>
+        <div class="mt-3 divide-y divide-slate-100">
+            @foreach ($categories as $c)
+                <div class="flex flex-wrap items-center justify-between gap-3 py-2">
+                    <div class="flex items-center gap-3">
+                        @if ($c->photo_path)<img src="{{ asset($c->photo_path) }}" alt="" class="h-10 w-14 rounded object-cover">@endif
+                        <span class="text-sm font-medium">{{ $c->libelle }}</span>
+                        <span class="text-xs text-slate-500">{{ $c->capacite }} places · ordre {{ $c->ordre }}</span>
+                    </div>
+                    <button wire:click="editerCategorie({{ $c->id }})" class="rounded-md bg-green-50 px-3 py-1.5 text-xs font-medium text-brand">Éditer</button>
+                </div>
+            @endforeach
+        </div>
+        @if ($categorieEditId !== null)
+            <div class="mt-4 grid gap-3 border-t border-slate-100 pt-4 sm:grid-cols-3">
+                <input wire:model="categorieForm.libelle" placeholder="Libellé" class="rounded-lg border-slate-300 text-sm">
+                <input type="number" wire:model="categorieForm.capacite" placeholder="Capacité" class="rounded-lg border-slate-300 text-sm">
+                <input wire:model="categorieForm.gabarit" placeholder="Gabarit" class="rounded-lg border-slate-300 text-sm">
+                <input wire:model="categorieForm.photo_path" placeholder="Photo (chemin public)" class="rounded-lg border-slate-300 text-sm">
+                <input type="number" wire:model="categorieForm.ordre" placeholder="Ordre" class="rounded-lg border-slate-300 text-sm">
+                <label class="flex items-center gap-2 text-sm"><input type="checkbox" wire:model="categorieForm.actif"> Active</label>
+                <div class="flex gap-2 sm:col-span-3">
+                    <button wire:click="enregistrerCategorie" class="rounded-lg bg-brand px-3 py-2 text-sm font-semibold text-white">Enregistrer</button>
+                    <button wire:click="annuler" class="rounded-lg border border-slate-300 px-3 py-2 text-sm">Annuler</button>
+                </div>
+            </div>
+        @endif
+    </section>
+
     <div class="space-y-3">
         @foreach ($vehicules as $v)
             <div class="rounded-2xl bg-white shadow-sm ring-1 ring-slate-200" wire:key="veh-{{ $v->id }}">
