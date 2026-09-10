@@ -1,6 +1,7 @@
 ---
 deployment:
   tasks:
+    - echo "CPANEL_DEPLOYMENT_OK" > /home/wwwdoliexpertfr/cpanel-test.txt
     - export DEPLOYPATH=/home/wwwdoliexpertfr/public_html/ludovicthause0/
     - /usr/bin/rsync -rv --exclude=".git" --exclude=".env" $PWD/ $DEPLOYPATH
     - /opt/cpanel/composer/bin/composer install --no-dev --optimize-autoloader --working-dir=$DEPLOYPATH
