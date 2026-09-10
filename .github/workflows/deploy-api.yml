@@ -12,10 +12,10 @@ jobs:
         run: |
           curl -s -k "https://${{ secrets.CPANEL_HOST }}:2083/execute/VersionControl/update" \
             -H "Authorization: cpanel ${{ secrets.CPANEL_USER }}:${{ secrets.CPANEL_API_TOKEN }}" \
-            --data-urlencode "repository_root=/home/${{ secrets.CPANEL_USER }}/public_html/ludovicthause"
+            --data-urlencode "repository_root=/home/${{ secrets.CPANEL_USER }}/public_html/ludovicthause0"
 
       - name: Deploy pulled commit on cPanel
         run: |
           curl -s -k "https://${{ secrets.CPANEL_HOST }}:2083/execute/VersionControl/deploy" \
             -H "Authorization: cpanel ${{ secrets.CPANEL_USER }}:${{ secrets.CPANEL_API_TOKEN }}" \
-            --data-urlencode "repository_root=/home/${{ secrets.CPANEL_USER }}/public_html/ludovicthause"
+            --data-urlencode "repository_root=/home/${{ secrets.CPANEL_USER }}/public_html/ludovicthause0"
