@@ -2,6 +2,7 @@
 
 namespace App\Livewire\Admin;
 
+use App\Models\Commune;
 use App\Models\Demande;
 use App\Models\Devis;
 use App\Models\Etape;
@@ -11,6 +12,7 @@ use App\Models\Parametre;
 use App\Models\Planning;
 use App\Models\Poste;
 use App\Models\Vehicule;
+use App\Services\Geocodage;
 use App\Services\MoteurCalcul;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Auth;
@@ -40,6 +42,38 @@ class DemandeShow extends Component
     public array $lieuLibelle = [];
 
     public array $lieuAdresse = [];
+
+    // Suggestions ville / adresse lors de la modification d'un lieu (Itinéraire).
+    public array $suggestionsVille = [];
+
+    public array $suggestionsAdresse = [];
+
+    // Saisie en cours de recherche (par étape).
+    public array $villeRecherche = [];
+
+    public array $adresseRecherche = [];
+
+    // Affichage du champ de recherche (vs. libellé figé + bouton « changer »).
+    public array $editionVille = [];
+
+    public array $editionAdresse = [];
+
+    // Valeurs sélectionnées (ville / adresse) en attente d'enregistrement.
+    public array $lieuVille = [];
+
+    public array $lieuVilleLat = [];
+
+    public array $lieuVilleLng = [];
+
+    public array $lieuCitycode = [];
+
+    public array $lieuLat = [];
+
+    public array $lieuLng = [];
+
+    public array $lieuGeocodageSource = [];
+
+    public array $lieuGeocodageProviderId = [];
 
     // Saisie d'une prestation supplémentaire (ligne libre).
     public string $ligneLibelle = '';
@@ -97,6 +131,16 @@ class DemandeShow extends Component
             $this->lieuCommentaire[$etape->id] = (string) $etape->lieu_commentaire;
             $this->lieuLibelle[$etape->id] = (string) ($etape->lieu_libelle ?: $etape->libelle());
             $this->lieuAdresse[$etape->id] = (string) ($etape->adresse_normalisee ?: $etape->adresse);
+            $this->lieuVille[$etape->id] = (string) ($etape->ville ?: $etape->commune?->nom);
+            // Contexte ville pour restreindre la recherche d'adresse.
+            $this->lieuVilleLat[$etape->id] = $etape->commune?->latitude ?? $etape->latitude;
+            $this->lieuVilleLng[$etape->id] = $etape->commune?->longitude ?? $etape->longitude;
+            $this->lieuCitycode[$etape->id] = $etape->commune?->code_insee;
+            // Point effectif (adresse si dispo, sinon ville).
+            $this->lieuLat[$etape->id] = $etape->latitude;
+            $this->lieuLng[$etape->id] = $etape->longitude;
+            $this->lieuGeocodageSource[$etape->id] = $etape->geocodage_source;
+            $this->lieuGeocodageProviderId[$etape->id] = $etape->geocodage_provider_id;
         }
     }
 
@@ -104,6 +148,122 @@ class DemandeShow extends Component
     protected function devisActuel(): ?Devis
     {
         return $this->demande->devis->sortByDesc('id')->first();
+    }
+
+    /** Contexte ville d'une étape, pour restreindre la recherche d'adresse. */
+    protected function contexteVilleEtape(int $etapeId): array
+    {
+        return [
+            'citycode' => $this->lieuCitycode[$etapeId] ?? null,
+            'ville' => $this->lieuVille[$etapeId] ?? null,
+            'lat' => $this->lieuVilleLat[$etapeId] ?? null,
+            'lng' => $this->lieuVilleLng[$etapeId] ?? null,
+        ];
+    }
+
+    /** Recherche ville/adresse dès que le texte change (comme dans le formulaire de création). */
+    public function updated(string $name, $value): void
+    {
+        $geo = app(Geocodage::class);
+
+        if (preg_match('/^villeRecherche\\.(\\d+)$/', $name, $m)) {
+            $this->suggestionsVille[(int) $m[1]] = $geo->rechercherVilles((string) $value);
+        } elseif (preg_match('/^adresseRecherche\\.(\\d+)$/', $name, $m)) {
+            $i = (int) $m[1];
+            $this->suggestionsAdresse[$i] = $geo->rechercherAdresses((string) $value, $this->contexteVilleEtape($i));
+        }
+    }
+
+    /** Affiche le champ de recherche de la ville pour une étape. */
+    public function changerVilleEtape(int $etapeId): void
+    {
+        $this->editionVille[$etapeId] = true;
+        $this->villeRecherche[$etapeId] = '';
+        $this->suggestionsVille[$etapeId] = [];
+    }
+
+    /** Affiche le champ de recherche de l'adresse pour une étape. */
+    public function changerAdresseEtape(int $etapeId): void
+    {
+        $this->editionAdresse[$etapeId] = true;
+        $this->adresseRecherche[$etapeId] = '';
+        $this->suggestionsAdresse[$etapeId] = [];
+    }
+
+    /** Annule la recherche de ville et revient au libellé figé. */
+    public function annulerVilleEtape(int $etapeId): void
+    {
+        $this->editionVille[$etapeId] = false;
+        $this->villeRecherche[$etapeId] = '';
+        $this->suggestionsVille[$etapeId] = [];
+    }
+
+    /** Annule la recherche d'adresse et revient au libellé figé. */
+    public function annulerAdresseEtape(int $etapeId): void
+    {
+        $this->editionAdresse[$etapeId] = false;
+        $this->adresseRecherche[$etapeId] = '';
+        $this->suggestionsAdresse[$etapeId] = [];
+    }
+
+    /** Applique la ville sélectionnée à l'étape. */
+    public function appliquerVilleEtape(int $etapeId, int $index): void
+    {
+        $s = ($this->suggestionsVille[$etapeId] ?? [])[$index] ?? null;
+        if (! $s) {
+            return;
+        }
+
+        // La ville change -> l'adresse précédente n'est plus valable.
+        $ancienLibelle = trim((string) ($this->lieuLibelle[$etapeId] ?? ''));
+        $ancienneAdresse = trim((string) ($this->lieuAdresse[$etapeId] ?? ''));
+        $ancienneVille = trim((string) ($this->lieuVille[$etapeId] ?? ''));
+        $this->lieuVille[$etapeId] = (string) $s['label'];
+        $this->lieuVilleLat[$etapeId] = (float) $s['lat'];
+        $this->lieuVilleLng[$etapeId] = (float) $s['lng'];
+        $this->lieuCitycode[$etapeId] = $s['citycode'] ?? null;
+        // Point effectif = ville tant qu'aucune adresse n'est sélectionnée.
+        $this->lieuLat[$etapeId] = (float) $s['lat'];
+        $this->lieuLng[$etapeId] = (float) $s['lng'];
+        $this->lieuAdresse[$etapeId] = '';
+        // Ne pas écraser un nom du lieu personnalisé saisi par la secrétaire.
+        if ($ancienLibelle === '' || $ancienLibelle === $ancienneAdresse || $ancienLibelle === $ancienneVille) {
+            $this->lieuLibelle[$etapeId] = (string) $s['label'];
+        }
+        $this->lieuGeocodageSource[$etapeId] = $s['source'] ?? null;
+        $this->lieuGeocodageProviderId[$etapeId] = $s['provider_id'] ?? null;
+
+        $this->editionVille[$etapeId] = false;
+        $this->villeRecherche[$etapeId] = '';
+        $this->suggestionsVille[$etapeId] = [];
+        $this->suggestionsAdresse[$etapeId] = [];
+    }
+
+    /** Applique l'adresse sélectionnée à l'étape. */
+    public function appliquerAdresseEtape(int $etapeId, int $index): void
+    {
+        $s = ($this->suggestionsAdresse[$etapeId] ?? [])[$index] ?? null;
+        if (! $s) {
+            return;
+        }
+
+        // Ne pas écraser un nom du lieu personnalisé saisi par la secrétaire.
+        $ancienLibelle = trim((string) ($this->lieuLibelle[$etapeId] ?? ''));
+        $ancienneAdresse = trim((string) ($this->lieuAdresse[$etapeId] ?? ''));
+        $ancienneVille = trim((string) ($this->lieuVille[$etapeId] ?? ''));
+
+        $this->lieuAdresse[$etapeId] = $s['adresse_normalisee'] ?? $s['label'];
+        $this->lieuLat[$etapeId] = (float) $s['lat'];
+        $this->lieuLng[$etapeId] = (float) $s['lng'];
+        if ($ancienLibelle === '' || $ancienLibelle === $ancienneAdresse || $ancienLibelle === $ancienneVille) {
+            $this->lieuLibelle[$etapeId] = $s['adresse_normalisee'] ?? $s['label'];
+        }
+        $this->lieuGeocodageSource[$etapeId] = $s['source'] ?? null;
+        $this->lieuGeocodageProviderId[$etapeId] = $s['provider_id'] ?? null;
+
+        $this->editionAdresse[$etapeId] = false;
+        $this->adresseRecherche[$etapeId] = '';
+        $this->suggestionsAdresse[$etapeId] = [];
     }
 
     /** Fenêtre [début, fin] du déplacement, déduite des dates d'étapes. */
@@ -182,6 +342,64 @@ class DemandeShow extends Component
         }
 
         return 'vert';
+    }
+
+    public function getReglementationAlertesProperty(): array
+    {
+        $devis = $this->devisActuel();
+        if (! $devis) {
+            return ['Le calcul de la réglementation n’est pas disponible : affectez un véhicule et lancez le calcul avant de confirmer la demande.'];
+        }
+
+        $grille = $devis->calcul_payload['rse']['grille_journaliere'] ?? [];
+        if ($grille === []) {
+            return ['Le calcul de la réglementation n’est pas disponible : lancez le calcul avant validation.'];
+        }
+
+        $seuilAmplitude = (int) Parametre::get('rse_amplitude_max_min', 780);
+        $seuilConduite = (int) Parametre::get('rse_conduite_journaliere_max_min', 540);
+        $seuilTte = (int) Parametre::get('rse_tte_max_min', 900);
+
+        $alertes = [];
+
+        foreach ($grille as $jour) {
+            $date = Carbon::parse($jour['date'] ?? now())->format('d/m/Y');
+            $amplitude = (int) ($jour['amplitude_min'] ?? 0);
+            $conduite = (int) ($jour['heures_100_min'] ?? $jour['conduite_min'] ?? 0);
+            $tte = (int) ($jour['tte_min'] ?? 0);
+
+            if (($jour['statut'] ?? null) === 'Horaires incomplets') {
+                $alertes[] = 'Journée du '.$date.' : horaires incomplets, la réglementation n’est pas vérifiable (renseigner horaires de service).';
+            }
+
+            if (($jour['amplitude_min'] ?? null) !== null && $amplitude > $seuilAmplitude) {
+                $alertes[] = 'Journée du '.$date.' : Amplitude de '.($this->formatMinutes($amplitude)).' > '.($this->formatMinutes($seuilAmplitude)).' (réduire amplitude).';
+            }
+
+            if ($conduite > $seuilConduite) {
+                $alertes[] = 'Journée du '.$date.' : Conduite de '.($this->formatMinutes($conduite)).' > '.($this->formatMinutes($seuilConduite)).' (réduire conduite).';
+            }
+
+            if ($tte > $seuilTte) {
+                $alertes[] = 'Journée du '.$date.' : TTE de '.($this->formatMinutes($tte)).' > '.($this->formatMinutes($seuilTte)).' (réduire temps de service).';
+            }
+
+            if (! empty($jour['relais_necessaire'])) {
+                $alertes[] = 'Journée du '.$date.' : relais nécessaire / 2 chauffeurs requis selon la réglementation (ajouter second chauffeur).';
+            }
+        }
+
+        return array_values(array_unique($alertes));
+    }
+
+    public function reglementationEstValide(): bool
+    {
+        return empty($this->reglementationAlertes);
+    }
+
+    protected function formatMinutes(int $minutes): string
+    {
+        return intdiv($minutes, 60).'h'.str_pad($minutes % 60, 2, '0', STR_PAD_LEFT);
     }
 
     /** Détail poste par poste du temps de service (REQ-S-04). */
@@ -731,6 +949,12 @@ class DemandeShow extends Component
             return;
         }
 
+        if (! $this->reglementationEstValide()) {
+            $this->erreur = 'La demande ne peut pas être confirmée tant que la réglementation sociale (RSE) n’est pas conforme. Vérifiez les alertes ci-dessous.';
+
+            return;
+        }
+
         $devis->update(['statut' => $statutDevis]);
         if ($statutDevis === 'valide') {
             $this->alimenterCarnet();
@@ -740,6 +964,129 @@ class DemandeShow extends Component
 
         Journal::enregistrer('Devis '.$statutDevis, $this->demande->reference);
         $this->flash = 'Devis : '.$statutDevis.'.';
+    }
+
+    public function corrigerReglementation(): void
+    {
+        $devis = $this->devisActuel();
+        if (! $devis) {
+            $this->erreur = 'Aucun devis à corriger.';
+
+            return;
+        }
+
+        $grille = $devis->calcul_payload['rse']['grille_journaliere'] ?? [];
+        if ($grille === []) {
+            $this->erreur = 'Lancez d’abord le calcul du devis pour obtenir les seuils réglementaires.';
+
+            return;
+        }
+
+        $seuilAmplitude = (int) Parametre::get('rse_amplitude_max_min', 780);
+        $seuilConduite = (int) Parametre::get('rse_conduite_journaliere_max_min', 540);
+        $seuilTte = (int) Parametre::get('rse_tte_max_min', 900);
+
+        $this->corrigerHorairesManquantsPourReglementation($devis, $grille);
+
+        $maxConduite = min((int) $devis->duree_conduite_minutes, $seuilConduite * max(1, count($grille)));
+        $maxAttente = max(0, min((int) $devis->temps_attente_minutes, max(0, $seuilTte - $maxConduite)));
+
+        $this->edit_duree_conduite_minutes = $maxConduite;
+        $this->edit_temps_attente_minutes = $maxAttente;
+        $this->override_raison = 'Correction automatique réglementaire';
+        $this->appliquerOverride();
+
+        $this->demande->refresh()->load(['categorie', 'etapes.commune', 'devis.vehicule', 'devis.postes']);
+        app(MoteurCalcul::class)->recalculerRsePourDevis($devis);
+        $this->demande->refresh()->load(['categorie', 'etapes.commune', 'devis.vehicule', 'devis.postes']);
+
+        $this->flash = 'Réglages RSE ramenés au minimum réglementaire.';
+        $this->erreur = null;
+    }
+
+    protected function corrigerHorairesManquantsPourReglementation(Devis $devis, array $grille): void
+    {
+        $jours = collect($grille)
+            ->pluck('date')
+            ->filter(fn ($date) => filled($date))
+            ->unique()
+            ->values()
+            ->all();
+
+        if ($jours === []) {
+            $jours = $this->demande->etapes
+                ->pluck('date')
+                ->filter(fn ($date) => filled($date))
+                ->unique()
+                ->values()
+                ->all();
+        }
+
+        foreach ($jours as $date) {
+            $dateObj = Carbon::parse($date);
+            $etapesJour = $this->demande->etapes
+                ->filter(fn ($etape) => $etape->date && $etape->date->format('Y-m-d') === $dateObj->toDateString())
+                ->sortBy('ordre');
+
+            if ($etapesJour->isEmpty()) {
+                continue;
+            }
+
+            $premiere = $etapesJour->first();
+            $derniere = $etapesJour->last();
+
+            if ($premiere->heure_depart === null) {
+                $premiere->heure_depart = '08:00';
+            }
+            if ($derniere->heure_arrivee === null) {
+                $derniere->heure_arrivee = '17:00';
+            }
+            if ($premiere->date === null) {
+                $premiere->date = $dateObj->format('Y-m-d');
+            }
+            if ($derniere->date === null) {
+                $derniere->date = $dateObj->format('Y-m-d');
+            }
+            $premiere->save();
+            $derniere->save();
+
+            $posteTypeMin = ['prise_service', 'fin_service', 'conduite'];
+            foreach ($posteTypeMin as $type) {
+                $exists = Poste::query()
+                    ->where('devis_id', $devis->id)
+                    ->where('date', $dateObj->toDateString())
+                    ->where('type', $type)
+                    ->exists();
+
+                if ($exists) {
+                    continue;
+                }
+
+                $heureDebut = '08:00';
+                $heureFin = '17:00';
+                $dureeMin = 540;
+
+                if ($type === 'fin_service') {
+                    $heureDebut = '17:00';
+                    $heureFin = '17:00';
+                    $dureeMin = 0;
+                }
+
+                Poste::create([
+                    'devis_id' => $devis->id,
+                    'date' => $dateObj->toDateString(),
+                    'ordre' => 1,
+                    'type' => $type,
+                    'heure_debut' => $heureDebut,
+                    'heure_fin' => $heureFin,
+                    'duree_min' => $dureeMin,
+                    'taux' => 100,
+                    'origine' => 'correction_reglementaire',
+                    'auteur' => Auth::user()?->name ?? 'secrétariat',
+                    'date_modif' => now(),
+                ]);
+            }
+        }
     }
 
     /** Clic sur « Devis PDF » alors que le devis est encore en brouillon. */
@@ -784,9 +1131,21 @@ class DemandeShow extends Component
             "lieuAdresse.$etapeId" => ['nullable', 'string', 'max:255'],
         ]);
 
+        $ville = ($this->lieuVille[$etapeId] ?? null);
+        $villeLat = ($this->lieuVilleLat[$etapeId] ?? null);
+        $villeLng = ($this->lieuVilleLng[$etapeId] ?? null);
+        $citycode = ($this->lieuCitycode[$etapeId] ?? null);
+
         $etape->update([
+            'commune_id' => ! empty($citycode) ? Commune::where('code_insee', $citycode)->value('id') : $etape->commune_id,
+            'ville' => $ville ?: ($etape->ville ?: ($etape->commune?->nom ?? null)),
+            'adresse' => $this->lieuAdresse[$etapeId] ?: null,
             'lieu_libelle' => $this->lieuLibelle[$etapeId],
             'adresse_normalisee' => $this->lieuAdresse[$etapeId] ?: null,
+            'geocodage_source' => ($this->lieuGeocodageSource[$etapeId] ?? null) ?: $etape->geocodage_source,
+            'geocodage_provider_id' => ($this->lieuGeocodageProviderId[$etapeId] ?? null) ?: $etape->geocodage_provider_id,
+            'latitude' => ($this->lieuLat[$etapeId] ?? null) ?: ($villeLat ?? $etape->latitude),
+            'longitude' => ($this->lieuLng[$etapeId] ?? null) ?: ($villeLng ?? $etape->longitude),
             'lieu_acces' => $this->lieuAcces[$etapeId] ?? null,
             'lieu_contact' => $this->lieuContact[$etapeId] ?? null,
             'lieu_commentaire' => $this->lieuCommentaire[$etapeId] ?? null,

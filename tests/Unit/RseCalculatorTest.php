@@ -2,6 +2,7 @@
 
 namespace Tests\Unit;
 
+use App\Livewire\Admin\DemandeShow;
 use App\Models\Demande;
 use App\Models\Devis;
 use App\Models\Parametre;
@@ -104,5 +105,102 @@ class RseCalculatorTest extends TestCase
 
         $total100 = array_sum(array_column($grille, 'heures_100_min'));
         $this->assertSame(600, $total100);
+    }
+
+    public function test_reglementation_invalide_declenche_alerte_et_bloc_le_devis(): void
+    {
+        $demande = Demande::create([
+            'reference' => 'DEM-RSE-'.now()->format('YmdHis'),
+            'mode' => 'ferme',
+            'type_trajet' => 'simple',
+            'nb_passagers' => 1,
+            'client_nom' => 'Test',
+            'client_email' => 'test@test.com',
+            'statut' => 'nouvelle',
+        ]);
+
+        $devis = Devis::create([
+            'demande_id' => $demande->id,
+            'reference' => 'DEV-RSE-'.now()->format('YmdHis'),
+            'statut' => 'brouillon',
+            'cout_revient_ht' => 1500,
+            'calcul_payload' => [
+                'rse' => [
+                    'grille_journaliere' => [[
+                        'date' => now()->toDateString(),
+                        'amplitude_min' => 781,
+                        'tte_min' => 901,
+                        'heures_100_min' => 541,
+                        'heures_50_min' => 10,
+                        'relais_necessaire' => true,
+                        'statut' => 'Contrôle effectué',
+                    ]],
+                ],
+            ],
+        ]);
+
+        $component = new DemandeShow;
+        $component->demande = $demande->load('devis');
+
+        $this->assertFalse($component->reglementationEstValide());
+        $this->assertNotEmpty($component->reglementationAlertes);
+        $this->assertStringContainsString('Amplitude', $component->reglementationAlertes[0]);
+
+        $component->changerStatutDevis('valide', 'devis_edite');
+
+        $this->assertStringContainsString('réglementation sociale', strtolower($component->erreur));
+    }
+
+    public function test_corriger_reglementation_remplit_les_horaires_incomplets_avec_un_minimum_valide(): void
+    {
+        $date = now()->addDay()->toDateString();
+        $demande = Demande::create([
+            'reference' => 'DEM-CORR-'.now()->format('YmdHis'),
+            'mode' => 'ferme',
+            'type_trajet' => 'simple',
+            'nb_passagers' => 1,
+            'client_nom' => 'Test',
+            'client_email' => 'test@test.com',
+            'statut' => 'en_traitement',
+        ]);
+
+        $demande->etapes()->create([
+            'ordre' => 1,
+            'date' => $date,
+            'heure_arrivee' => null,
+            'heure_depart' => null,
+            'ville' => 'Paris',
+            'adresse' => 'Paris',
+        ]);
+
+        $devis = Devis::create([
+            'demande_id' => $demande->id,
+            'reference' => 'DEV-CORR-'.now()->format('YmdHis'),
+            'statut' => 'brouillon',
+            'cout_revient_ht' => 1200,
+            'duree_conduite_minutes' => 420,
+            'temps_attente_minutes' => 0,
+            'calcul_payload' => [
+                'rse' => [
+                    'grille_journaliere' => [[
+                        'date' => $date,
+                        'amplitude_min' => null,
+                        'tte_min' => 0,
+                        'heures_100_min' => 0,
+                        'heures_50_min' => 0,
+                        'relais_necessaire' => false,
+                        'statut' => 'Horaires incomplets',
+                    ]],
+                ],
+            ],
+        ]);
+
+        $component = new DemandeShow;
+        $component->demande = $demande->load(['devis', 'etapes']);
+        $component->corrigerReglementation();
+
+        $this->assertNotNull($demande->fresh()->etapes()->first()->heure_depart);
+        $this->assertNotNull($demande->fresh()->etapes()->first()->heure_arrivee);
+        $this->assertStringNotContainsString('Horaires incomplets', json_encode($devis->fresh()->calcul_payload['rse']['grille_journaliere'] ?? []));
     }
 }

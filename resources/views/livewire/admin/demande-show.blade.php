@@ -23,6 +23,42 @@
         <div class="mb-4 rounded-lg bg-green-50 p-3 text-sm text-green-700 ring-1 ring-green-200">{{ $flash }}</div>
     @endif
 
+    @if (! $devis?->vehicule_id)
+        <div class="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+            <strong>Choisir un véhicule pour lancer le calcul du coût.</strong>
+            <span class="ml-2">La sélection du véhicule est obligatoire avant de calculer le devis.</span>
+        </div>
+    @endif
+
+    @if ($devis?->cout_revient_ht > 0 && ! $this->reglementationEstValide())
+        <div class="mb-4 flex justify-end">
+            <button type="button" wire:click="corrigerReglementation"
+                    class="rounded-lg bg-amber-600 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-700">
+                Fixer au minimum réglementaire
+            </button>
+        </div>
+    @endif
+
+    @php
+        $reglementationAlertes = $this->reglementationAlertes;
+        $reglementationValide = $this->reglementationEstValide();
+    @endphp
+
+    @if (! $reglementationValide)
+        <div class="mb-4 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">
+            <div class="flex items-center justify-between gap-3">
+                <span class="font-semibold">⚠ Règlementation non conforme</span>
+                <span class="rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-red-700">Bloqué</span>
+            </div>
+            <p class="mt-2">Aucune demande ne peut être confirmée tant que la réglementation sociale n’est pas valide.</p>
+            <ul class="mt-3 list-disc space-y-1 pl-5">
+                @foreach ($reglementationAlertes as $alerte)
+                    <li>{{ $alerte }}</li>
+                @endforeach
+            </ul>
+        </div>
+    @endif
+
     @if ($devis?->cout_revient_ht > 0)
         @php $rse = $resume_rse; @endphp
         <div class="mb-4 rounded-2xl bg-white shadow-sm ring-1 ring-slate-200 p-4">
@@ -115,7 +151,73 @@
                                             <span class="ml-1 rounded bg-white px-1.5 py-0.5 text-[10px] text-slate-400">{{ $etape->geocodage_source }}</span>
                                         @endif
                                     </div>
-                                     <div class="mt-2 grid gap-2 sm:grid-cols-2">
+                                    @php
+                                        $villeSuggestions = data_get($suggestionsVille, (string) $etape->id, []);
+                                        $adresseSuggestions = data_get($suggestionsAdresse, (string) $etape->id, []);
+                                    @endphp
+                                    <div class="mt-2 grid gap-2 sm:grid-cols-2">
+                                         <div>
+                                            <span class="block text-[10px] uppercase tracking-wide text-slate-400">Ville</span>
+                                            @if (data_get($editionVille, (string) $etape->id, false))
+                                                <div class="relative">
+                                                    <input type="text" autocomplete="off"
+                                                           wire:model.live.debounce.350ms="villeRecherche.{{ $etape->id }}"
+                                                           placeholder="Ville (France ou Europe) — ex. Nevers, Milan…"
+                                                           class="w-full rounded border-slate-300 text-xs shadow-sm focus:border-brand focus:ring-brand">
+                                                    @if ($villeSuggestions !== [])
+                                                        <ul class="absolute z-20 mt-1 max-h-72 w-full overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-lg">
+                                                            @foreach ($villeSuggestions as $k => $s)
+                                                                <li>
+                                                                    <button type="button" wire:click="appliquerVilleEtape({{ $etape->id }}, {{ $k }})"
+                                                                            class="block w-full px-3 py-2 text-left text-xs hover:bg-green-50">{{ $s['label'] }}</button>
+                                                                </li>
+                                                            @endforeach
+                                                        </ul>
+                                                    @endif
+                                                </div>
+                                            @elseif (! empty(data_get($lieuVille, (string) $etape->id, '')))
+                                                <div class="flex items-center justify-between rounded border border-slate-300 bg-white px-2 py-1">
+                                                    <span class="truncate text-xs text-slate-700">{{ $lieuVille[$etape->id] }}</span>
+                                                    <button type="button" wire:click="changerVilleEtape({{ $etape->id }})"
+                                                            class="shrink-0 ml-1 text-[10px] text-brand hover:underline">changer</button>
+                                                </div>
+                                            @else
+                                                <span class="block text-xs text-slate-400">Aucune ville</span>
+                                            @endif
+                                        </div>
+                                         <div>
+                                            <span class="block text-[10px] uppercase tracking-wide text-slate-400">Adresse (rue et n°)</span>
+                                            @if (data_get($editionAdresse, (string) $etape->id, false))
+                                                <div class="relative">
+                                                    <input type="text" autocomplete="off"
+                                                           wire:model.live.debounce.350ms="adresseRecherche.{{ $etape->id }}"
+                                                           placeholder="N° et nom de rue{{ ! empty($lieuVille[$etape->id] ?? '') ? ' dans '.$lieuVille[$etape->id] : '' }}…"
+                                                           class="w-full rounded border-slate-300 text-xs shadow-sm focus:border-brand focus:ring-brand">
+                                                    @if ($adresseSuggestions !== [])
+                                                        <ul class="absolute z-20 mt-1 max-h-72 w-full overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-lg">
+                                                            @foreach ($adresseSuggestions as $k => $s)
+                                                                <li>
+                                                                    <button type="button" wire:click="appliquerAdresseEtape({{ $etape->id }}, {{ $k }})"
+                                                                            class="block w-full px-3 py-2 text-left text-xs hover:bg-green-50">{{ $s['label'] }}</button>
+                                                                </li>
+                                                            @endforeach
+                                                        </ul>
+                                                    @endif
+                                                </div>
+                                            @elseif (! empty(data_get($lieuAdresse, (string) $etape->id, '')))
+                                                <div class="flex items-center justify-between rounded border border-slate-300 bg-white px-2 py-1">
+                                                    <span class="truncate text-xs text-slate-700">{{ $lieuAdresse[$etape->id] }}</span>
+                                                    <button type="button" wire:click="changerAdresseEtape({{ $etape->id }})"
+                                                            class="shrink-0 ml-1 text-[10px] text-brand hover:underline">changer</button>
+                                                </div>
+                                            @else
+                                                <div class="flex items-center justify-between gap-2 rounded border border-dashed border-slate-300 bg-white px-2 py-1">
+                                                    <span class="text-xs text-slate-400">Aucune adresse</span>
+                                                    <button type="button" wire:click="changerAdresseEtape({{ $etape->id }})"
+                                                            class="shrink-0 text-[10px] font-medium text-brand hover:underline">ajouter</button>
+                                                </div>
+                                            @endif
+                                        </div>
                                          <input type="text" wire:model="lieuLibelle.{{ $etape->id }}" placeholder="Nom du lieu"
                                              class="rounded border-slate-300 text-xs shadow-sm">
                                          <input type="text" wire:model="lieuAdresse.{{ $etape->id }}" placeholder="Adresse normalisée"
@@ -619,12 +721,24 @@
                             </a>
                         @endif
                         @if ($devis->statut === 'brouillon')
-                            <button wire:click="valider" class="rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white hover:bg-brand-dark">Valider le devis</button>
+                            <button wire:click="valider" @disabled(! $reglementationValide)
+                                    class="rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white hover:bg-brand-dark disabled:cursor-not-allowed disabled:bg-slate-300">
+                                Valider le devis
+                            </button>
                         @elseif ($devis->statut === 'valide')
-                            <button wire:click="envoyer" class="rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white hover:bg-brand-dark">Marquer comme envoyé</button>
+                            <button wire:click="envoyer" @disabled(! $reglementationValide)
+                                    class="rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white hover:bg-brand-dark disabled:cursor-not-allowed disabled:bg-slate-300">
+                                Marquer comme envoyé
+                            </button>
                         @elseif ($devis->statut === 'envoye')
-                            <button wire:click="accepter" class="rounded-lg bg-green-700 px-4 py-2 text-sm font-semibold text-white hover:bg-green-800">Accepté</button>
-                            <button wire:click="refuser" class="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700">Refusé</button>
+                            <button wire:click="accepter" @disabled(! $reglementationValide)
+                                    class="rounded-lg bg-green-700 px-4 py-2 text-sm font-semibold text-white hover:bg-green-800 disabled:cursor-not-allowed disabled:bg-slate-300">
+                                Accepté
+                            </button>
+                            <button wire:click="refuser" @disabled(! $reglementationValide)
+                                    class="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:bg-slate-300">
+                                Refusé
+                            </button>
                         @endif
                     </div>
                 </div>
