@@ -1,4 +1,31 @@
-<div>
+<div x-on:scroll-to-section.window="
+    const target = document.getElementById($event.detail.target);
+    if (!target) return;
+    target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    target.classList.remove('scroll-attention');
+    requestAnimationFrame(() => target.classList.add('scroll-attention'));
+    setTimeout(() => target.classList.remove('scroll-attention'), 1400);
+">
+    <style>
+        @keyframes alert-attention {
+            0%, 100% { transform: scale(1); }
+            35% { transform: scale(1.015); }
+            70% { transform: scale(0.995); }
+        }
+        @keyframes scroll-attention {
+            0%, 100% { transform: scale(1); }
+            35% { transform: scale(1.025); box-shadow: 0 0 0 4px rgb(245 158 11 / 35%); }
+            70% { transform: scale(0.995); }
+        }
+        .reglementation-alert { animation: alert-attention 1.2s ease-in-out 2; }
+        .scroll-attention, .scroll-attention:target { animation: scroll-attention 1.2s ease-in-out; }
+        [id] { scroll-margin-top: 6rem; }
+        @media (prefers-reduced-motion: reduce) {
+            .reglementation-alert, .scroll-attention, .scroll-attention:target { animation: none; }
+            html { scroll-behavior: auto; }
+        }
+        html { scroll-behavior: smooth; }
+    </style>
     <div class="mb-6 flex flex-wrap items-center justify-between gap-3">
         <div>
             <a href="{{ route('admin.demandes') }}" class="text-sm text-slate-400 hover:text-slate-600">← Toutes les demandes</a>
@@ -23,6 +50,32 @@
         <div class="mb-4 rounded-lg bg-green-50 p-3 text-sm text-green-700 ring-1 ring-green-200">{{ $flash }}</div>
     @endif
 
+    @if ($erreur)
+        @php
+            $erreurTexte = \Illuminate\Support\Str::lower($erreur);
+            if (str_contains($erreurTexte, 'véhicule') || str_contains($erreurTexte, 'vehicule')) {
+                $erreurCible = 'affectation-vehicule';
+                $erreurEmplacement = 'Aller à l’affectation du véhicule';
+            } elseif (str_contains($erreurTexte, 'réglementation') || str_contains($erreurTexte, 'rse')) {
+                $erreurCible = 'reglementation-alertes';
+                $erreurEmplacement = 'Aller aux alertes réglementaires';
+            } elseif (str_contains($erreurTexte, 'poste') || str_contains($erreurTexte, 'durée')) {
+                $erreurCible = 'rse-resultat';
+                $erreurEmplacement = 'Aller au détail des horaires et postes';
+            } elseif (str_contains($erreurTexte, 'override') || str_contains($erreurTexte, 'surcharge')) {
+                $erreurCible = 'surcharges-manuelles';
+                $erreurEmplacement = 'Aller aux surcharges manuelles';
+            } else {
+                $erreurCible = 'chiffrage';
+                $erreurEmplacement = 'Aller au calcul du devis';
+            }
+        @endphp
+        <div class="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800" role="alert">
+            <p>{{ $erreur }}</p>
+            <a href="#{{ $erreurCible }}" x-on:click.prevent="$dispatch('scroll-to-section', { target: '{{ $erreurCible }}' })" class="mt-1 inline-flex font-semibold underline underline-offset-2 hover:text-red-950">{{ $erreurEmplacement }} →</a>
+        </div>
+    @endif
+
     @if (! $devis?->vehicule_id)
         <div class="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
             <strong>Choisir un véhicule pour lancer le calcul du coût.</strong>
@@ -45,7 +98,7 @@
     @endphp
 
     @if (! $reglementationValide)
-        <div class="mb-4 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">
+        <div id="reglementation-alertes" class="reglementation-alert mb-4 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">
             <div class="flex items-center justify-between gap-3">
                 <span class="font-semibold">⚠ Règlementation non conforme</span>
                 <span class="rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-red-700">Bloqué</span>
@@ -53,7 +106,18 @@
             <p class="mt-2">Aucune demande ne peut être confirmée tant que la réglementation sociale n’est pas valide.</p>
             <ul class="mt-3 list-disc space-y-1 pl-5">
                 @foreach ($reglementationAlertes as $alerte)
-                    <li>{{ $alerte }}</li>
+                    @php
+                        $alerteCible = 'chiffrage';
+                        if (preg_match('/Journée du (\d{2}\/\d{2}\/\d{4})/', $alerte, $dateAlerte)) {
+                            $alerteCible = 'rse-jour-'.\Illuminate\Support\Carbon::createFromFormat('d/m/Y', $dateAlerte[1])->format('Y-m-d');
+                        } elseif (str_contains(\Illuminate\Support\Str::lower($alerte), 'affectez un véhicule')) {
+                            $alerteCible = 'affectation-vehicule';
+                        }
+                    @endphp
+                    <li class="flex flex-wrap items-baseline justify-between gap-x-3">
+                        <span>{{ $alerte }}</span>
+                        <a href="#{{ $alerteCible }}" x-on:click.prevent="$dispatch('scroll-to-section', { target: '{{ $alerteCible }}' })" class="shrink-0 font-medium underline underline-offset-2 hover:text-red-950">Voir où corriger</a>
+                    </li>
                 @endforeach
             </ul>
         </div>
@@ -61,7 +125,7 @@
 
     @if ($devis?->cout_revient_ht > 0)
         @php $rse = $resume_rse; @endphp
-        <div class="mb-4 rounded-2xl bg-white shadow-sm ring-1 ring-slate-200 p-4">
+        <div id="rse-resultat" class="mb-4 rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200">
             <div class="flex flex-wrap items-center gap-4 text-xs font-medium">
                 <span class="text-slate-400 uppercase tracking-wide">RSE</span>
                 <span class="inline-flex items-center gap-1 px-2 py-1 rounded-full
@@ -94,13 +158,9 @@
     <div class="grid gap-6 lg:grid-cols-3">
         {{-- Colonne principale : voyage + étapes --}}
         <div class="lg:col-span-2 space-y-6">
-            <section class="rounded-2xl bg-white shadow-sm ring-1 ring-slate-200 p-6">
+            <section id="affectation-vehicule" class="rounded-2xl bg-white shadow-sm ring-1 ring-slate-200 p-6">
                 <h2 class="text-sm font-semibold uppercase tracking-wide text-slate-400">Voyage demandé</h2>
                 <div class="mt-3 grid gap-4 sm:grid-cols-3 text-sm">
-                    <div>
-                        <div class="text-slate-400">Type de trajet</div>
-                        <div class="font-medium text-slate-800">{{ ['simple'=>'Aller simple','journee'=>'Aller-retour dans la journée','multi_jours'=>'Mise à disposition / voyage multi-jours'][$demande->type_trajet] ?? $demande->type_trajet }}</div>
-                    </div>
                     <div>
                         <div class="text-slate-400">Nature de la prestation</div>
                         <div class="font-medium text-slate-800">{{ $demande->nature_prestation ?? '—' }}</div>
@@ -123,11 +183,11 @@
 
             <section class="rounded-2xl bg-white shadow-sm ring-1 ring-slate-200 p-6">
                 <h2 class="text-sm font-semibold uppercase tracking-wide text-slate-400 mb-4">Itinéraire</h2>
-                <ol class="relative border-l border-slate-200 ml-3 space-y-5">
+                <ol class="grid grid-cols-1 gap-4 sm:grid-cols-2">
                     @foreach ($demande->etapes as $etape)
-                        <li class="ml-5">
-                            <span class="absolute -left-2.5 flex h-5 w-5 items-center justify-center rounded-full bg-brand text-[10px] text-white">{{ $etape->ordre }}</span>
-                            <div class="flex flex-wrap items-baseline gap-x-3">
+                        <li class="min-w-0 rounded-lg border border-slate-200 bg-white p-4">
+                            <div class="flex flex-wrap items-center gap-2">
+                                <span class="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-brand text-[10px] font-semibold text-white">{{ $etape->ordre }}</span>
                                 <span class="font-medium text-slate-800">{{ $etape->libelle() }}</span>
                                 <span class="text-sm text-slate-500">{{ $etape->date?->format('d/m/Y') }}</span>
                             </div>
@@ -310,7 +370,7 @@
 
     {{-- ---------- Chiffrage (Phase 4) ---------- --}}
     @if ($devis?->vehicule_id)
-        <section class="mt-6 rounded-2xl bg-white shadow-sm ring-1 ring-slate-200 p-6">
+        <section id="chiffrage" class="mt-6 rounded-2xl bg-white shadow-sm ring-1 ring-slate-200 p-6">
             <div class="flex flex-wrap items-center justify-between gap-3">
                 <h2 class="text-lg font-semibold text-slate-900">Chiffrage</h2>
                 <button wire:click="calculer" wire:target="calculer" wire:loading.attr="disabled"
@@ -319,10 +379,6 @@
                     <span wire:loading wire:target="calculer">Calcul…</span>
                 </button>
             </div>
-
-            @if ($erreur)
-                <div class="mt-3 rounded-lg bg-red-50 p-3 text-sm text-red-700 ring-1 ring-red-200">{{ $erreur }}</div>
-            @endif
 
             @if ($devis->cout_revient_ht > 0)
                 @php $source = $devis->calcul_payload['source_itineraire'] ?? 'estimation'; @endphp
@@ -336,43 +392,41 @@
                     </div>
                 @endif
 
-                <div class="mt-5 grid gap-8 lg:grid-cols-2">
+                <div class="mt-5 grid grid-cols-1 items-start gap-6 lg:grid-cols-12">
                     {{-- Détail des postes --}}
-                    <div class="space-y-1.5 text-sm">
-                        <div class="flex justify-between text-xs text-slate-400 uppercase tracking-wide">
-                            <span>Poste</span><span>Montant HT</span>
+                    @php $dDeb = $demande->etapes->min('date'); $dFin = $demande->etapes->max('date'); @endphp
+                    <div class="grid gap-3 sm:grid-cols-2 lg:col-span-12 lg:grid-cols-3">
+                        <div class="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                            <p class="text-xs font-medium uppercase tracking-wide text-slate-500">Distance</p>
+                            <p class="mt-1 text-sm font-semibold text-slate-800">{{ number_format($devis->distance_km, 0, ',', ' ') }} km</p>
+                            <p class="text-xs text-slate-500">{{ number_format($devis->distance_km_charge,0,',',' ') }} km chargés · {{ number_format($devis->distance_km_vide,0,',',' ') }} km à vide</p>
                         </div>
-                        <div class="flex justify-between border-b border-slate-100 pb-1 text-slate-500">
-                            <span>Distance</span>
-                            <span>{{ number_format($devis->distance_km, 0, ',', ' ') }} km
-                                <span class="text-slate-400">({{ number_format($devis->distance_km_charge,0,',',' ') }} chargés / {{ number_format($devis->distance_km_vide,0,',',' ') }} à vide)</span>
-                            </span>
+                        <div class="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                            <p class="text-xs font-medium uppercase tracking-wide text-slate-500">Dates</p>
+                            <p class="mt-1 text-sm font-semibold text-slate-800">@if($dDeb && $dFin && $dDeb->ne($dFin))Du {{ $dDeb->format('d/m/Y') }} au {{ $dFin->format('d/m/Y') }}@elseif($dDeb)Le {{ $dDeb->format('d/m/Y') }}@else—@endif</p>
                         </div>
-                        @php $dDeb = $demande->etapes->min('date'); $dFin = $demande->etapes->max('date'); @endphp
-                        <div class="flex justify-between border-b border-slate-100 pb-1 text-slate-500">
-                            <span>Dates</span>
-                            <span>@if($dDeb && $dFin && $dDeb->ne($dFin))du {{ $dDeb->format('d/m/Y') }} au {{ $dFin->format('d/m/Y') }}@elseif($dDeb)le {{ $dDeb->format('d/m/Y') }}@else—@endif</span>
+                        <div class="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                            <p class="text-xs font-medium uppercase tracking-wide text-slate-500">Conduite / configuration</p>
+                            <p class="mt-1 text-sm font-semibold text-slate-800">{{ intdiv($devis->duree_conduite_minutes,60) }}h{{ str_pad($devis->duree_conduite_minutes%60,2,'0',STR_PAD_LEFT) }} · {{ $devis->nb_chauffeurs }} chauffeur(s)</p>
+                            @if ($devis->nb_nuitees)<p class="text-xs text-slate-500">{{ $devis->nb_nuitees }} nuitée(s)</p>@endif
                         </div>
-                        <div class="flex justify-between border-b border-slate-100 pb-1 text-slate-500">
-                            <span>Conduite / config.</span>
-                            <span>{{ intdiv($devis->duree_conduite_minutes,60) }}h{{ str_pad($devis->duree_conduite_minutes%60,2,'0',STR_PAD_LEFT) }}
-                                · {{ $devis->nb_chauffeurs }} chauffeur(s)@if($devis->nb_nuitees) · {{ $devis->nb_nuitees }} nuitée(s)@endif
-                            </span>
-                        </div>
-                        @php $grilleRse = $devis->calcul_payload['rse']['grille_journaliere'] ?? []; @endphp
+                    </div>
+
+                    @php $grilleRse = $devis->calcul_payload['rse']['grille_journaliere'] ?? []; @endphp
+                    <div class="lg:col-span-12">
                         @php $postesParJour = $devis->postes->groupBy(fn ($p) => $p->date->format('Y-m-d')); @endphp
                         @if ($grilleRse)
                             <div class="mt-3 overflow-x-auto rounded-lg border border-slate-200">
-                                <table class="min-w-full text-xs">
+                                <table class="min-w-[64rem] text-xs">
                                     <thead class="bg-slate-50 text-left text-slate-500">
                                         <tr>
-                                            <th class="px-2 py-2">Jour</th>
-                                            <th class="px-2 py-2">100 %</th>
-                                            <th class="px-2 py-2">50 %</th>
-                                            <th class="px-2 py-2">TTE</th>
-                                            <th class="px-2 py-2">Amplitude</th>
-                                            <th class="px-2 py-2">RSE</th>
-                                            <th class="px-2 py-2">Postes</th>
+                                            <th class="whitespace-nowrap px-3 py-2">Jour</th>
+                                            <th class="whitespace-nowrap px-3 py-2">100 %</th>
+                                            <th class="whitespace-nowrap px-3 py-2">50 %</th>
+                                            <th class="whitespace-nowrap px-3 py-2">TTE</th>
+                                            <th class="whitespace-nowrap px-3 py-2">Amplitude</th>
+                                            <th class="whitespace-nowrap px-3 py-2">RSE</th>
+                                            <th class="min-w-[20rem] px-3 py-2">Postes de service</th>
                                         </tr>
                                     </thead>
                                     <tbody>
@@ -385,7 +439,7 @@
                                                 $totalTte += $jour['tte_min'];
                                                 $postesJour = $postesParJour->get(Carbon\Carbon::parse($jour['date'])->format('Y-m-d'), collect());
                                             @endphp
-                                            <tr class="border-t border-slate-100">
+                                            <tr id="rse-jour-{{ Carbon\Carbon::parse($jour['date'])->format('Y-m-d') }}" class="border-t border-slate-100">
                                                 <td class="px-2 py-2">{{ Carbon\Carbon::parse($jour['date'])->format('d/m/Y') }}</td>
                                                 <td class="px-2 py-2">{{ $formatMin($jour['heures_100_min']) }}</td>
                                                 <td class="px-2 py-2">{{ $formatMin($jour['heures_50_min']) }}</td>
@@ -395,25 +449,24 @@
                                                     @if ($jour['relais_necessaire']) Relais nécessaire
                                                     @else {{ $jour['statut'] }} @endif
                                                 </td>
-                                                <td class="px-2 py-2">
+                                                <td class="min-w-[20rem] px-3 py-2 align-top">
                                                     @if($postesJour->isNotEmpty())
-                                                        <table class="text-xs w-full">
+                                                        <div class="space-y-1.5">
                                                             @foreach($postesJour as $p)
-                                                                <tr>
-                                                                    <td class="py-0.5">{{ $p->type }}</td>
-                                                                    <td class="py-0.5">{{ $p->heure_debut ? substr($p->heure_debut, 0, 5) : '—' }}</td>
-                                                                    <td class="py-0.5">{{ $p->heure_fin ? substr($p->heure_fin, 0, 5) : '—' }}</td>
-                                                                    <td class="py-0.5">{{ $p->duree_min ? $formatMin($p->duree_min) : '—' }}</td>
-                                                                    <td class="py-0.5 text-right">
-                                                                        <button wire:click="supprimerPoste({{ $p->id }})" class="text-red-500 hover:text-red-700">×</button>
-                                                                    </td>
-                                                                </tr>
+                                                                <div class="grid grid-cols-[minmax(6rem,1fr)_auto_auto_auto_auto_auto] items-center gap-2 rounded border border-slate-200 bg-white px-2 py-1.5">
+                                                                    <span class="font-medium text-slate-700">{{ ['prise_service' => 'Prise de service', 'conduite' => 'Conduite', 'attente' => 'Attente', 'fin_service' => 'Fin de service'][$p->type] ?? ucfirst(str_replace('_', ' ', $p->type)) }}</span>
+                                                                    <span class="tabular-nums text-slate-600">{{ $p->heure_debut ? $p->heure_debut->format('H:i') : '—' }}</span>
+                                                                    <span class="text-slate-400">→</span>
+                                                                    <span class="tabular-nums text-slate-600">{{ $p->heure_fin ? $p->heure_fin->format('H:i') : '—' }}</span>
+                                                                    <span class="whitespace-nowrap rounded bg-slate-100 px-1.5 py-0.5 text-slate-600">{{ $p->duree_min !== null ? $formatMin((int) $p->duree_min) : '—' }}</span>
+                                                                    <button type="button" wire:click="supprimerPoste({{ $p->id }})" title="Supprimer ce poste" aria-label="Supprimer le poste {{ $p->type }}" class="justify-self-end text-red-500 hover:text-red-700">×</button>
+                                                                </div>
                                                             @endforeach
-                                                        </table>
+                                                        </div>
                                                     @else
                                                         <span class="text-slate-400">—</span>
                                                     @endif
-                                                    <button wire:click="ouvrirAjoutPoste('{{ $jour['date'] }}')" class="mt-1 text-xs text-brand hover:underline">+ Ajouter</button>
+                                                    <button type="button" wire:click="ouvrirAjoutPoste('{{ $jour['date'] }}')" class="mt-2 inline-flex items-center rounded border border-slate-300 px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50">+ Ajouter un poste</button>
                                                     @if($editingPosteDate === $jour['date'])
                                                         <div class="mt-1 p-2 bg-slate-50 rounded border">
                                                             <select wire:model="poste_type" class="text-xs border rounded mb-1">
@@ -447,10 +500,13 @@
                             </div>
                             <p class="mt-1 text-[11px] text-slate-400">100 % = conduite, 50 % = attente. Amplitude contrôlée à 13 h ; horaires incomplets à compléter.</p>
                         @endif
+                    </div>
+
+                    <div class="space-y-4 text-sm lg:col-span-6">
 
                         {{-- Surcharges manuelles km / durées (REQ-S-06, REQ-S-10) --}}
                         @php $d = $devis; @endphp
-                        <div class="mt-4 rounded-lg border border-slate-200 p-3">
+                        <div id="surcharges-manuelles" class="mt-4 rounded-lg border border-slate-200 p-3">
                             <p class="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">Surcharges manuelles (km / durées)</p>
                             <div class="grid gap-2 sm:grid-cols-3 text-xs">
                                 <div>
@@ -488,10 +544,12 @@
                                 <button wire:click="reinitialiserOverride" class="rounded-lg border border-slate-300 px-3 py-1.5 text-xs text-slate-600 hover:bg-slate-50">Réinitialiser</button>
                             </div>
                             @if($d->override_author)
-                                <p class="mt-1 text-[10px] text-red-600">Override par {{ $d->override_author }} le {{ \Carbon\Carbon::parse($d->override_at)->format('d/m/Y H:i') }}</p>
+                                <p class="mt-1 text-[10px] text-orange-700">Override par {{ $d->override_author }} le {{ \Carbon\Carbon::parse($d->override_at)->format('d/m/Y H:i') }}</p>
                             @endif
                         </div>
+                    </div>
 
+                    <div class="space-y-4 text-sm lg:col-span-6">
                         {{-- Détail poste par poste du temps de service (REQ-S-04) --}}
                         @php $detailTS = $detail_temps_service; @endphp
                         @if ($detailTS)
@@ -517,6 +575,9 @@
                             </div>
                             <p class="mt-1 text-[11px] text-slate-400">Temps de service poste par poste. 100 % = conduite effective, 50 % = attente / disponibilité. Document interne uniquement.</p>
                         @endif
+                    </div>
+
+                    <div class="rounded-lg border border-slate-200 p-4 lg:col-span-12">
                         @php
                             $it   = $devis->calcul_payload['itineraire'] ?? [];
                             $par  = $devis->calcul_payload['parametres'] ?? [];
@@ -530,6 +591,8 @@
                             $fmt = fn ($v, $d = 2) => number_format((float) $v, $d, ',', ' ');
                         @endphp
 
+                        <p class="mt-4 text-xs text-slate-500">Montant actuel et éventuel remplacement en HT. Laissez un champ vide pour conserver le montant calculé.</p>
+
                         @if (($it['km_a_peage'] ?? null) !== null)
                             <div class="flex justify-between border-b border-slate-100 pb-1 text-slate-500">
                                 <span>Dont autoroute à péage</span>
@@ -537,109 +600,121 @@
                             </div>
                         @endif
 
-                        <div class="flex justify-between pt-1 items-center gap-2">
-                            <span>Carburant</span>
-                            <div class="flex items-center gap-2">
-                                <input type="number" step="0.01" wire:model="edit_cout_carburant" class="w-24 rounded border-slate-300 text-xs py-1" placeholder="{{ $fmt($devis->cout_carburant) }}">
-                                <span class="text-xs text-slate-500">{{ $fmt($devis->cout_carburant) }} €</span>
-                            </div>
-                        </div>
-                        @if ($veh && !empty($par['prixGasoil']))
-                            <p class="-mt-1 text-[11px] text-slate-400">{{ $fmt($veh->conso_l_100km, 1) }} L/100 km × {{ $fmt($devis->distance_km, 0) }} km × {{ $fmt($par['prixGasoil'], 3) }} €/L</p>
-                        @endif
-
-                        <div class="flex justify-between items-center gap-2">
-                            <span>Péage</span>
-                            <div class="flex items-center gap-2">
-                                <input type="number" step="0.01" wire:model="edit_cout_peage" class="w-24 rounded border-slate-300 text-xs py-1" placeholder="{{ $fmt($devis->cout_peage) }}">
-                                <span class="text-xs text-slate-500">{{ $fmt($devis->cout_peage) }} €</span>
-                            </div>
-                        </div>
-                        @if ($kmPeage > 0 && $tarifKm > 0)
-                            <p class="-mt-1 text-[11px] text-slate-400">{{ $fmt($kmPeage, 0) }} km à péage × {{ $fmt($tarifKm, 2) }} €/km @if($classe)(classe {{ $classe }})@endif</p>
-                        @endif
-
-                        @if ($devis->cout_vignettes > 0 || $edit_cout_vignettes !== null)
-                            <div class="flex justify-between items-center gap-2">
-                                <span>Vignettes</span>
-                                <div class="flex items-center gap-2">
-                                    <input type="number" step="0.01" wire:model="edit_cout_vignettes" class="w-24 rounded border-slate-300 text-xs py-1" placeholder="{{ $fmt($devis->cout_vignettes) }}">
-                                    <span class="text-xs text-slate-500">{{ $fmt($devis->cout_vignettes) }} €</span>
+                        <div class="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                            <div class="rounded-lg border border-slate-200 bg-slate-50/70 p-3">
+                                <div class="flex items-start justify-between gap-2">
+                                    <label for="cout-carburant" class="text-sm font-medium text-slate-700">Carburant</label>
+                                    <span class="text-right text-xs text-slate-500">Actuel<br><strong class="text-sm text-slate-800">{{ $fmt($devis->cout_carburant) }} €</strong></span>
                                 </div>
-                            </div>
-                        @endif
-
-                        <div class="flex justify-between items-center gap-2">
-                            <span>Chauffeur</span>
-                            <div class="flex items-center gap-2">
-                                <input type="number" step="0.01" wire:model="edit_cout_chauffeur" class="w-24 rounded border-slate-300 text-xs py-1" placeholder="{{ $fmt($devis->cout_chauffeur) }}">
-                                <span class="text-xs text-slate-500">{{ $fmt($devis->cout_chauffeur) }} €</span>
-                            </div>
-                        </div>
-                        @if (!empty($par['tauxChauffeur']))
-                            <p class="-mt-1 text-[11px] text-slate-400">
-                                {{ $fmt($par['tauxChauffeur']) }} €/h × {{ $fmt($heuresCh, 1) }} h × {{ $devis->nb_chauffeurs }} chauffeur(s)
-                                @if ($devis->nb_nuitees > 0)
-                                    + {{ $fmt($par['fraisNuitee'] ?? 0, 0) }} € × {{ $devis->nb_nuitees }} nuitée(s) × {{ $devis->nb_chauffeurs }}
+                                <div class="mt-2 flex items-center gap-2">
+                                    <input id="cout-carburant" type="number" min="0" step="0.01" inputmode="decimal" wire:model="edit_cout_carburant" placeholder="Nouveau montant HT" class="min-w-0 flex-1 rounded border-slate-300 text-sm shadow-sm">
+                                    <span class="text-xs text-slate-500">€ HT</span>
+                                </div>
+                                @error('edit_cout_carburant') <p class="mt-1 text-xs text-red-600">{{ $message }}</p> @enderror
+                                @if ($veh && !empty($par['prixGasoil']))
+                                    <p class="mt-2 text-[11px] text-slate-500">{{ $fmt($veh->conso_l_100km, 1) }} L/100 km × {{ $fmt($devis->distance_km, 0) }} km × {{ $fmt($par['prixGasoil'], 3) }} €/L</p>
                                 @endif
-                                @if ($devis->nb_chauffeurs > 1)<br><span class="text-amber-600">2 chauffeurs imposés : conduite &gt; 9 h/jour (RSE 561/2006)</span>@endif
-                            </p>
-                        @endif
-
-                        <div class="flex justify-between items-center gap-2">
-                            <span>Charges fixes</span>
-                            <div class="flex items-center gap-2">
-                                <input type="number" step="0.01" wire:model="edit_cout_charges_fixes" class="w-24 rounded border-slate-300 text-xs py-1" placeholder="{{ $fmt($devis->cout_charges_fixes) }}">
-                                <span class="text-xs text-slate-500">{{ $fmt($devis->cout_charges_fixes) }} €</span>
+                            </div>
+                            <div class="rounded-lg border border-slate-200 bg-slate-50/70 p-3">
+                                <div class="flex items-start justify-between gap-2">
+                                    <label for="cout-peage" class="text-sm font-medium text-slate-700">Péage</label>
+                                    <span class="text-right text-xs text-slate-500">Actuel<br><strong class="text-sm text-slate-800">{{ $fmt($devis->cout_peage) }} €</strong></span>
+                                </div>
+                                <div class="mt-2 flex items-center gap-2">
+                                    <input id="cout-peage" type="number" min="0" step="0.01" inputmode="decimal" wire:model="edit_cout_peage" placeholder="Nouveau montant HT" class="min-w-0 flex-1 rounded border-slate-300 text-sm shadow-sm">
+                                    <span class="text-xs text-slate-500">€ HT</span>
+                                </div>
+                                @error('edit_cout_peage') <p class="mt-1 text-xs text-red-600">{{ $message }}</p> @enderror
+                                @if ($kmPeage > 0 && $tarifKm > 0)
+                                    <p class="mt-2 text-[11px] text-slate-500">{{ $fmt($kmPeage, 0) }} km à péage × {{ $fmt($tarifKm, 2) }} €/km @if($classe)(classe {{ $classe }})@endif</p>
+                                @endif
+                            </div>
+                            <div class="rounded-lg border border-slate-200 bg-slate-50/70 p-3">
+                                <div class="flex items-start justify-between gap-2">
+                                    <label for="cout-chauffeur" class="text-sm font-medium text-slate-700">Chauffeur</label>
+                                    <span class="text-right text-xs text-slate-500">Actuel<br><strong class="text-sm text-slate-800">{{ $fmt($devis->cout_chauffeur) }} €</strong></span>
+                                </div>
+                                <div class="mt-2 flex items-center gap-2">
+                                    <input id="cout-chauffeur" type="number" min="0" step="0.01" inputmode="decimal" wire:model="edit_cout_chauffeur" placeholder="Nouveau montant HT" class="min-w-0 flex-1 rounded border-slate-300 text-sm shadow-sm">
+                                    <span class="text-xs text-slate-500">€ HT</span>
+                                </div>
+                                @error('edit_cout_chauffeur') <p class="mt-1 text-xs text-red-600">{{ $message }}</p> @enderror
+                                @if (!empty($par['tauxChauffeur']))
+                                    <p class="mt-2 text-[11px] text-slate-500">
+                                        {{ $fmt($par['tauxChauffeur']) }} €/h × {{ $fmt($heuresCh, 1) }} h × {{ $devis->nb_chauffeurs }} chauffeur(s)
+                                        @if ($devis->nb_nuitees > 0)
+                                            + {{ $fmt($par['fraisNuitee'] ?? 0, 0) }} € × {{ $devis->nb_nuitees }} nuitée(s) × {{ $devis->nb_chauffeurs }}
+                                        @endif
+                                        @if ($devis->nb_chauffeurs > 1)<br><span class="text-amber-700">2 chauffeurs imposés : conduite &gt; 9 h/jour (RSE 561/2006)</span>@endif
+                                    </p>
+                                @endif
+                            </div>
+                            @if ($devis->cout_vignettes > 0 || $edit_cout_vignettes !== null)
+                                <div class="rounded-lg border border-slate-200 bg-slate-50/70 p-3">
+                                    <div class="flex items-start justify-between gap-2">
+                                        <label for="cout-vignettes" class="text-sm font-medium text-slate-700">Vignettes</label>
+                                        <span class="text-right text-xs text-slate-500">Actuel<br><strong class="text-sm text-slate-800">{{ $fmt($devis->cout_vignettes) }} €</strong></span>
+                                    </div>
+                                    <div class="mt-2 flex items-center gap-2">
+                                        <input id="cout-vignettes" type="number" min="0" step="0.01" inputmode="decimal" wire:model="edit_cout_vignettes" placeholder="Nouveau montant HT" class="min-w-0 flex-1 rounded border-slate-300 text-sm shadow-sm">
+                                        <span class="text-xs text-slate-500">€ HT</span>
+                                    </div>
+                                    @error('edit_cout_vignettes') <p class="mt-1 text-xs text-red-600">{{ $message }}</p> @enderror
+                                </div>
+                            @endif
+                            <div class="rounded-lg border border-slate-200 bg-slate-50/70 p-3">
+                                <div class="flex items-start justify-between gap-2">
+                                    <label for="cout-charges-fixes" class="text-sm font-medium text-slate-700">Charges fixes</label>
+                                    <span class="text-right text-xs text-slate-500">Actuel<br><strong class="text-sm text-slate-800">{{ $fmt($devis->cout_charges_fixes) }} €</strong></span>
+                                </div>
+                                <div class="mt-2 flex items-center gap-2">
+                                    <input id="cout-charges-fixes" type="number" min="0" step="0.01" inputmode="decimal" wire:model="edit_cout_charges_fixes" placeholder="Nouveau montant HT" class="min-w-0 flex-1 rounded border-slate-300 text-sm shadow-sm">
+                                    <span class="text-xs text-slate-500">€ HT</span>
+                                </div>
+                                @error('edit_cout_charges_fixes') <p class="mt-1 text-xs text-red-600">{{ $message }}</p> @enderror
+                                @if ($veh)
+                                    <p class="mt-2 text-[11px] text-slate-500">Quote-part {{ $veh->libelle ?? 'véhicule' }} sur {{ $veh->jours_exploitation_an }} j/an @if(!empty($par['coefSaison']) && $par['coefSaison'] != 1) · coef. saison {{ $fmt($par['coefSaison'], 2) }}@endif</p>
+                                @endif
+                            </div>
+                            <div class="rounded-lg border border-slate-200 bg-slate-50/70 p-3">
+                                <div class="flex items-start justify-between gap-2">
+                                    <label for="cout-charges-variables" class="text-sm font-medium text-slate-700">Charges variables</label>
+                                    <span class="text-right text-xs text-slate-500">Actuel<br><strong class="text-sm text-slate-800">{{ $fmt($devis->cout_charges_variables) }} €</strong></span>
+                                </div>
+                                <div class="mt-2 flex items-center gap-2">
+                                    <input id="cout-charges-variables" type="number" min="0" step="0.01" inputmode="decimal" wire:model="edit_cout_charges_variables" placeholder="Nouveau montant HT" class="min-w-0 flex-1 rounded border-slate-300 text-sm shadow-sm">
+                                    <span class="text-xs text-slate-500">€ HT</span>
+                                </div>
+                                @error('edit_cout_charges_variables') <p class="mt-1 text-xs text-red-600">{{ $message }}</p> @enderror
+                                @if ($varKm > 0)
+                                    <p class="mt-2 text-[11px] text-slate-500">{{ $fmt($varKm, 3) }} €/km (entretien, pneus, AdBlue…) × {{ $fmt($devis->distance_km, 0) }} km</p>
+                                @endif
                             </div>
                         </div>
-                        @if ($veh)
-                            <p class="-mt-1 text-[11px] text-slate-400">quote-part {{ $veh->libelle ?? 'véhicule' }} sur {{ $veh->jours_exploitation_an }} j/an @if(!empty($par['coefSaison']) && $par['coefSaison'] != 1) · coef. saison {{ $fmt($par['coefSaison'], 2) }}@endif</p>
-                        @endif
-
-                        <div class="flex justify-between items-center gap-2">
-                            <span>Charges variables</span>
-                            <div class="flex items-center gap-2">
-                                <input type="number" step="0.01" wire:model="edit_cout_charges_variables" class="w-24 rounded border-slate-300 text-xs py-1" placeholder="{{ $fmt($devis->cout_charges_variables) }}">
-                                <span class="text-xs text-slate-500">{{ $fmt($devis->cout_charges_variables) }} €</span>
-                            </div>
-                        </div>
-                        @if ($varKm > 0)
-                            <p class="-mt-1 text-[11px] text-slate-400">{{ $fmt($varKm, 3) }} €/km (entretien, pneus, AdBlue…) × {{ $fmt($devis->distance_km, 0) }} km</p>
-                        @endif
                         <div class="flex justify-between border-t border-slate-200 pt-2 font-semibold text-slate-800">
                             <span>Coût de revient HT</span><span>{{ number_format($devis->cout_revient_ht,2,',',' ') }} €</span>
                         </div>
                         @if($d->override_author)
-                            <p class="mt-1 text-[10px] text-red-600">Override coûts par {{ $d->override_author }} le {{ \Carbon\Carbon::parse($d->override_at)->format('d/m/Y H:i') }}</p>
+                            <p class="mt-1 text-[10px] text-orange-700">Override coûts par {{ $d->override_author }} le {{ \Carbon\Carbon::parse($d->override_at)->format('d/m/Y H:i') }}</p>
                         @endif
-                        <div class="mt-2 flex gap-2">
-                            <button wire:click="appliquerOverrideCouts" class="rounded-lg bg-brand px-3 py-1.5 text-xs font-semibold text-white hover:bg-brand-dark">Appliquer les coûts</button>
-                            <button wire:click="reinitialiserOverrideCouts" class="rounded-lg border border-slate-300 px-3 py-1.5 text-xs text-slate-600 hover:bg-slate-50">Réinitialiser coûts</button>
+                        <div class="mt-3 flex flex-wrap items-center gap-2 rounded-lg bg-slate-50 p-3">
+                            <button wire:click="appliquerOverrideCouts" wire:loading.attr="disabled" class="rounded-lg bg-brand px-3 py-2 text-sm font-semibold text-white hover:bg-brand-dark disabled:opacity-50">Enregistrer les montants</button>
+                            <button wire:click="reinitialiserOverrideCouts" class="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 hover:bg-slate-100">Revenir aux coûts calculés</button>
                         </div>
                     </div>
 
-                    {{-- Marge + totaux (garde-fou) --}}
-                    <div>
+                </div>
+
+                {{-- Synthèse financière pleine largeur --}}
+                <div class="mt-6 grid grid-cols-1 gap-4 border-t border-slate-200 pt-5 lg:grid-cols-12">
+                    <div class="rounded-lg border border-slate-200 p-4 lg:col-span-3">
                         <label class="block text-sm font-medium text-slate-700">Marge : <span class="font-semibold text-brand">{{ number_format($marge_taux,0,',',' ') }} %</span></label>
                         <input type="range" min="0" max="50" step="1" wire:model.live="marge_taux" class="mt-2 w-full accent-brand">
+                        <p class="mt-2 text-xs text-slate-500">Ajustez la marge appliquée au coût de revient.</p>
+                    </div>
 
-                        @php
-                            $supplements = $devis->totalLignesLibres();
-                            $htTransport = (float) $devis->montant_ht - $supplements;
-                        @endphp
-                        <div class="mt-4 space-y-1.5 text-sm">
-                            @if ($supplements != 0)
-                                <div class="flex justify-between"><span class="text-slate-500">Transport HT</span><span>{{ number_format($htTransport,2,',',' ') }} €</span></div>
-                                <div class="flex justify-between"><span class="text-slate-500">Prestations suppl. HT</span><span>{{ number_format($supplements,2,',',' ') }} €</span></div>
-                            @endif
-                            <div class="flex justify-between"><span class="text-slate-500">Montant HT</span><span class="font-medium">{{ number_format($devis->montant_ht,2,',',' ') }} €</span></div>
-                            <div class="flex justify-between"><span class="text-slate-500">TVA ({{ number_format($devis->taux_tva,0,',',' ') }} %)</span><span>{{ number_format($devis->montant_tva,2,',',' ') }} €</span></div>
-                            <div class="flex justify-between border-t border-slate-200 pt-2 text-lg font-bold text-slate-900"><span>Total TTC</span><span>{{ number_format($devis->montant_ttc,2,',',' ') }} €</span></div>
-                        </div>
-
-                        {{-- Prestations supplémentaires (lignes libres) --}}
-                        <div class="mt-5 rounded-lg border border-slate-200 p-3">
+                    {{-- Prestations supplémentaires (lignes libres) --}}
+                    <div class="rounded-lg border border-slate-200 p-4 lg:col-span-5">
                             <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Prestations supplémentaires</p>
 
                             @if (! empty($devis->lignes_libres))
@@ -649,41 +724,59 @@
                                             <span class="text-slate-700">{{ $ligne['libelle'] }}</span>
                                             <span class="flex items-center gap-2 shrink-0">
                                                 <span class="font-medium">{{ number_format((float) $ligne['montant'],2,',',' ') }} €</span>
-                                                <button wire:click="retirerLigne({{ $i }})" title="Retirer"
-                                                        class="text-xs text-red-500 hover:text-red-700">✕</button>
+                                                <button wire:click="retirerLigne({{ $i }})" title="Retirer" class="text-xs text-red-500 hover:text-red-700">✕</button>
                                             </span>
                                         </div>
                                     @endforeach
                                 </div>
                             @else
-                                <p class="mt-1 text-xs text-slate-400">Aucune. Ajoutez ici toute prestation à facturer en plus du transport (guide, parking, repas…).</p>
+                                <p class="mt-1 text-xs text-slate-400">Aucune prestation supplémentaire.</p>
                             @endif
 
                             <div class="mt-3 flex flex-wrap items-start gap-2">
                                 <div class="min-w-[9rem] flex-1">
-                                    <input type="text" wire:model="ligneLibelle" placeholder="Libellé (ex. Parking)"
-                                           class="w-full rounded-lg border-slate-300 text-sm shadow-sm focus:border-brand focus:ring-brand">
+                                    <input type="text" wire:model="ligneLibelle" placeholder="Libellé (ex. Parking)" class="w-full rounded-lg border-slate-300 text-sm shadow-sm focus:border-brand focus:ring-brand">
                                     @error('ligneLibelle') <p class="mt-1 text-xs text-red-600">{{ $message }}</p> @enderror
                                 </div>
                                 <div class="w-28">
-                                    <input type="number" step="0.01" wire:model="ligneMontant" placeholder="€ HT"
-                                           class="w-full rounded-lg border-slate-300 text-sm shadow-sm focus:border-brand focus:ring-brand">
+                                    <input type="number" step="0.01" wire:model="ligneMontant" placeholder="€ HT" class="w-full rounded-lg border-slate-300 text-sm shadow-sm focus:border-brand focus:ring-brand">
                                     @error('ligneMontant') <p class="mt-1 text-xs text-red-600">{{ $message }}</p> @enderror
                                 </div>
-                                <button wire:click="ajouterLigne"
-                                        class="rounded-lg bg-brand px-3 py-2 text-sm font-semibold text-white hover:bg-brand-dark">Ajouter</button>
+                                <button wire:click="ajouterLigne" class="rounded-lg bg-brand px-3 py-2 text-sm font-semibold text-white hover:bg-brand-dark">Ajouter</button>
                             </div>
-                            <p class="mt-2 text-[11px] text-slate-400">Facturées telles quelles (sans marge), soumises à la TVA. Elles apparaissent sur le devis PDF.</p>
-                        </div>
+                            <p class="mt-2 text-[11px] text-slate-400">Facturées sans marge, soumises à la TVA et affichées sur le devis PDF.</p>
+                    </div>
 
-                        @php $perte = $devis->marge_montant <= 0; @endphp
-                        <div class="mt-4 rounded-lg p-3 text-sm {{ $perte ? 'bg-red-50 text-red-800 ring-1 ring-red-200' : 'bg-green-50 text-green-800 ring-1 ring-green-200' }}">
-                            <div class="flex items-center justify-between">
-                                <span class="font-medium">{{ $perte ? '⚠ PERTE' : 'Marge dégagée' }}</span>
-                                <span class="text-lg font-bold">{{ number_format($devis->marge_montant,2,',',' ') }} €</span>
-                            </div>
-                            <p class="mt-1 text-xs opacity-80">Seuil de rentabilité (coût de revient) : {{ number_format($devis->cout_revient_ht,2,',',' ') }} € HT</p>
+                    @php
+                        $supplements = $devis->totalLignesLibres();
+                        $htTransport = (float) $devis->montant_ht - $supplements;
+                    @endphp
+                    <div class="rounded-lg border border-slate-200 p-4 lg:col-span-4">
+                        <h3 class="text-xs font-semibold uppercase tracking-wide text-slate-500">Totaux du devis</h3>
+                        <div class="mt-3 space-y-2 text-sm">
+                            @if ($supplements != 0)
+                                <div class="flex justify-between"><span class="text-slate-500">Transport HT</span><span>{{ number_format($htTransport,2,',',' ') }} €</span></div>
+                                <div class="flex justify-between"><span class="text-slate-500">Prestations suppl. HT</span><span>{{ number_format($supplements,2,',',' ') }} €</span></div>
+                            @endif
+                            <div class="flex justify-between border-t border-slate-100 pt-2"><span class="text-slate-500">Montant HT</span><span class="font-semibold text-slate-800">{{ number_format($devis->montant_ht,2,',',' ') }} €</span></div>
+                            <div class="flex justify-between"><span class="text-slate-500">TVA ({{ number_format($devis->taux_tva,0,',',' ') }} %)</span><span>{{ number_format($devis->montant_tva,2,',',' ') }} €</span></div>
                         </div>
+                        @php $perte = $devis->marge_montant <= 0; @endphp
+                        <div class="mt-3 rounded-lg p-3 text-sm {{ $perte ? 'bg-red-50 text-red-800 ring-1 ring-red-200' : 'bg-green-50 text-green-800 ring-1 ring-green-200' }}">
+                            <div class="flex items-center justify-between gap-2">
+                                <span class="font-medium">{{ $perte ? '⚠ PERTE' : 'Marge dégagée' }}</span>
+                                <span class="font-bold">{{ number_format($devis->marge_montant,2,',',' ') }} €</span>
+                            </div>
+                            <p class="mt-1 text-xs opacity-80">Seuil de rentabilité : {{ number_format($devis->cout_revient_ht,2,',',' ') }} € HT</p>
+                        </div>
+                    </div>
+
+                    <div class="flex flex-col justify-center rounded-lg bg-brand px-5 py-4 text-white shadow-sm lg:col-span-12 sm:flex-row sm:items-center sm:justify-between">
+                        <div>
+                            <p class="text-xs font-semibold uppercase tracking-wide text-white/80">Total toutes taxes comprises</p>
+                            <p class="mt-1 text-sm text-white/80">Montant HT {{ number_format($devis->montant_ht,2,',',' ') }} € · TVA {{ number_format($devis->montant_tva,2,',',' ') }} €</p>
+                        </div>
+                        <p class="mt-2 text-3xl font-bold tabular-nums sm:mt-0">{{ number_format($devis->montant_ttc,2,',',' ') }} € <span class="text-base font-semibold">TTC</span></p>
                     </div>
                 </div>
 

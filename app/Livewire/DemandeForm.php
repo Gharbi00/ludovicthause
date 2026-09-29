@@ -22,8 +22,6 @@ class DemandeForm extends Component
 {
     public string $mode = 'estimation';
 
-    public string $type_trajet = 'simple';
-
     public ?int $nb_passagers = 30;
 
     public ?int $categorie_id = null;
@@ -418,7 +416,6 @@ class DemandeForm extends Component
         $estFerme = $this->mode === 'ferme';
         $rules = [
             'mode' => ['required', 'in:estimation,ferme'],
-            'type_trajet' => ['required', 'in:simple,journee,multi_jours'],
             'nb_passagers' => ['required', 'integer', 'min:1', 'max:120'],
             'categorie_id' => ['nullable', 'exists:categories,id'],
             'nature_prestation' => ['required', 'string', 'in:mariage,team_building,voyage_organise,sortie_scolaire,excursion,transfert,evenement,autre'],
@@ -540,7 +537,7 @@ class DemandeForm extends Component
         $demande = Demande::create([
             'reference' => $this->genererReference(),
             'mode' => $data['mode'],
-            'type_trajet' => $data['type_trajet'],
+            'type_trajet' => 'simple',
             'categorie_id' => $data['categorie_id'],
             'nb_passagers' => $data['nb_passagers'],
             'nature_prestation' => $naturePrestation,

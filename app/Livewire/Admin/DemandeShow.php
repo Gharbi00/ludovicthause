@@ -527,6 +527,7 @@ class DemandeShow extends Component
 
         if (! $devis || ! $devis->vehicule_id) {
             $this->erreur = 'Affectez d\'abord un véhicule.';
+            $this->dispatch('scroll-to-section', target: 'affectation-vehicule');
 
             return;
         }
@@ -542,6 +543,7 @@ class DemandeShow extends Component
             $resultat = $moteur->calculer($this->demande, $devis->vehicule, $this->marge_taux, $devis);
         } catch (\Throwable $e) {
             $this->erreur = 'Calcul impossible : '.$e->getMessage();
+            $this->dispatch('scroll-to-section', target: 'chiffrage');
 
             return;
         }
@@ -559,6 +561,7 @@ class DemandeShow extends Component
 
         $this->demande->refresh()->load(['categorie', 'etapes.commune', 'devis.vehicule', 'devis.postes']);
         $this->flash = 'Calcul effectué (overrides conservés).';
+        $this->dispatch('scroll-to-section', target: 'rse-resultat');
     }
 
     /**

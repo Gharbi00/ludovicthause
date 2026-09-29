@@ -287,10 +287,6 @@
       </p>
       <ol class="steps">
         <li>
-          <h3>Choisir le type de trajet</h3>
-          <p>Aller simple, aller-retour <strong>par les mêmes étapes</strong>, aller-retour <strong>par des étapes différentes</strong>, ou pas de retour. Le retour se pré-remplit automatiquement quand c'est possible.</p>
-        </li>
-        <li>
           <h3>Renseigner les étapes du voyage</h3>
           <p>Pour chaque point : une <strong>ville (avec code postal)</strong> et, pour le départ et l'arrivée, une <strong>adresse précise</strong> (rue + n°). La recherche est tolérante aux accents, tirets et espaces — taper <em>frejus</em> trouve <em>Fréjus</em>.</p>
         </li>

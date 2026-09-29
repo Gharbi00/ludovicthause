@@ -71,15 +71,6 @@
                             Demande ferme : sélectionnez chaque ville et chaque adresse dans les suggestions.
                         @endif
                     </div>
-                    <div class="sm:col-span-2">
-                        <label class="block text-sm font-medium text-slate-700">Type de trajet</label>
-                        <select wire:model.live="type_trajet" class="mt-1 w-full rounded-lg border-slate-300 shadow-sm focus:border-brand focus:ring-brand">
-                            <option value="simple">Aller simple</option>
-                            <option value="journee">Aller-retour dans la journée</option>
-                            <option value="multi_jours">Mise à disposition / voyage multi-jours</option>
-                        </select>
-                        @error('type_trajet') <p data-erreur class="mt-1 text-xs text-red-600">{{ $message }}</p> @enderror
-                    </div>
                 </div>
                 <div class="mt-4 grid gap-5 sm:grid-cols-2">
                     <div>
@@ -345,7 +336,6 @@
                     <h2 class="text-lg font-semibold text-slate-900">Récapitulatif de votre demande</h2>
                     <p class="mt-1 text-sm text-slate-600">Vérifiez les informations avant l’envoi. Vous pouvez revenir à chaque étape.</p>
                     <dl class="mt-4 grid gap-2 text-sm sm:grid-cols-2">
-                        <div><dt class="text-slate-400">Type</dt><dd class="font-medium">{{ ['simple'=>'Aller simple','journee'=>'Aller-retour dans la journée','multi_jours'=>'Mise à disposition / voyage multi-jours'][$type_trajet] }}</dd></div>
                         <div><dt class="text-slate-400">Prestation</dt><dd class="font-medium">{{ $nature_prestation === 'autre' ? $nature_prestation_autre : ucfirst(str_replace('_', ' ', $nature_prestation)) }}</dd></div>
                     </dl>
                     <div class="mt-4 space-y-2 text-sm">
