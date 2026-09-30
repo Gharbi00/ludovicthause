@@ -664,25 +664,33 @@ class DemandeForm extends Component
         ];
     }
 
+
     public function submit(): void
     {
+        // Honeypot anti-bot
         if ($this->website !== '') {
             return;
         }
 
+        /*
+         * Rate limit
+         *
+         * En environnement testing : désactivé pour permettre
+         * l'exécution des tests E2E/Playwright.
+         *
+         * En production/local : maximum 5 soumissions par IP
+         * sur une fenêtre de 1 heure.
+         */
+        $isTesting = app()->environment('testing');
         $cle = 'demande:' . request()->ip();
 
-        if (!app()->environment('testing')) {
-            if (RateLimiter::tooManyAttempts($cle, 5)) {
-                $this->addError(
-                    'rate_limit',
-                    'Trop de demandes envoyées. Merci de réessayer plus tard.'
-                );
+        if (!$isTesting && RateLimiter::tooManyAttempts($cle, 5)) {
+            $this->addError(
+                'rate_limit',
+                'Trop de demandes envoyées. Merci de réessayer plus tard.'
+            );
 
-                return;
-            }
-
-            RateLimiter::hit($cle, 3600);
+            return;
         }
 
         // Les étapes sans date reprennent la date de départ avant contrôle.
@@ -695,19 +703,29 @@ class DemandeForm extends Component
             $data = null;
         }
 
-        // Contrôles chronologiques (après validate(), qui réinitialise le sac d'erreurs).
+        // Contrôles chronologiques après validate().
         $chronoOk = $this->verifierChronologieRetour();
+
         if (!$this->verifierChronologieHoraires()) {
             $chronoOk = false;
         }
 
+        // Validation échouée
         if ($data === null || !$chronoOk) {
             $this->dispatch('formulaire-invalide');
 
             return;
         }
 
-        RateLimiter::hit($cle, 3600);
+        /*
+         * Incrémenter le rate limiter UNIQUEMENT après
+         * une validation réussie.
+         *
+         * Une seule fois par soumission.
+         */
+        if (!$isTesting) {
+            RateLimiter::hit($cle, 3600);
+        }
 
         $libellesPrestations = [
             'mariage' => 'Mariage',
@@ -718,9 +736,13 @@ class DemandeForm extends Component
             'transfert' => 'Transfert',
             'evenement' => 'Événement',
         ];
+
         $naturePrestation = $this->nature_prestation === 'autre'
             ? trim($this->nature_prestation_autre)
-            : ($libellesPrestations[$this->nature_prestation] ?? $this->nature_prestation);
+            : (
+                $libellesPrestations[$this->nature_prestation]
+                ?? $this->nature_prestation
+            );
 
         $demande = Demande::create([
             'reference' => $this->genererReference(),
@@ -740,53 +762,100 @@ class DemandeForm extends Component
         ]);
 
         $journee = array_values($this->etapes);
+
         if ($this->retour_type !== 'aucun') {
-            $journee = array_merge($journee, array_values($this->etapes_retour));
+            $journee = array_merge(
+                $journee,
+                array_values($this->etapes_retour)
+            );
         }
 
         $nbEtapes = count($journee);
+
         foreach ($journee as $i => $e) {
             $estPremier = $i === 0;
             $estDernier = $i === $nbEtapes - 1;
+
             $demande->etapes()->create([
                 'ordre' => $i + 1,
-                'commune_id' => !empty($e['citycode']) ? Commune::where('code_insee', $e['citycode'])->value('id') : null,
+                'commune_id' => !empty($e['citycode'])
+                    ? Commune::where(
+                        'code_insee',
+                        $e['citycode']
+                    )->value('id')
+                    : null,
+
                 'ville' => $e['ville'] ?: null,
                 'adresse' => $e['adresse'] ?: null,
-                'lieu_libelle' => $e['lieu_libelle'] ?: ($e['adresse'] ?: $e['ville'] ?: null),
-                'adresse_normalisee' => $e['adresse_normalisee'] ?: ($e['adresse'] ?: null),
+
+                'lieu_libelle' => $e['lieu_libelle']
+                    ?: ($e['adresse'] ?: $e['ville'] ?: null),
+
+                'adresse_normalisee' => $e['adresse_normalisee']
+                    ?: ($e['adresse'] ?: null),
+
                 'geocodage_source' => $e['geocodage_source'] ?: null,
                 'geocodage_provider_id' => $e['geocodage_provider_id'] ?: null,
                 'latitude' => $e['latitude'] ?: null,
                 'longitude' => $e['longitude'] ?: null,
+
                 'date' => $e['date'],
-                'heure_arrivee' => $estPremier ? null : ($e['heure_arrivee'] ?: null),
-                'heure_depart' => $estDernier ? null : ($e['heure_depart'] ?: null),
-                'arrivee_imperative' => !$estPremier && (bool) ($e['arrivee_imperative'] ?? false),
-                'depart_imperatif' => !$estDernier && (bool) ($e['depart_imperatif'] ?? false),
+
+                'heure_arrivee' => $estPremier
+                    ? null
+                    : ($e['heure_arrivee'] ?: null),
+
+                'heure_depart' => $estDernier
+                    ? null
+                    : ($e['heure_depart'] ?: null),
+
+                'arrivee_imperative' => !$estPremier
+                    && (bool) ($e['arrivee_imperative'] ?? false),
+
+                'depart_imperatif' => !$estDernier
+                    && (bool) ($e['depart_imperatif'] ?? false),
             ]);
         }
 
-        if (Parametre::get('email_confirmation_active', true) && filter_var($demande->client_email, FILTER_VALIDATE_EMAIL)) {
+        // Email de confirmation client
+        if (
+            Parametre::get('email_confirmation_active', true)
+            && filter_var(
+                $demande->client_email,
+                FILTER_VALIDATE_EMAIL
+            )
+        ) {
             try {
-                Mail::mailer(TransportMail::resoudre())->to($demande->client_email)->send(new ConfirmationDemande($demande));
+                Mail::mailer(TransportMail::resoudre())
+                    ->to($demande->client_email)
+                    ->send(new ConfirmationDemande($demande));
             } catch (\Throwable $e) {
                 report($e);
             }
         }
 
-        $secretariat = (string) Parametre::get('email_secretariat', Parametre::get('email_from_address', ''));
+        // Email au secrétariat
+        $secretariat = (string) Parametre::get(
+            'email_secretariat',
+            Parametre::get('email_from_address', '')
+        );
+
         if (filter_var($secretariat, FILTER_VALIDATE_EMAIL)) {
             try {
-                Mail::mailer(TransportMail::resoudre())->to($secretariat)->send(new NotificationNouvelleDemande($demande));
+                Mail::mailer(TransportMail::resoudre())
+                    ->to($secretariat)
+                    ->send(new NotificationNouvelleDemande($demande));
             } catch (\Throwable $e) {
                 report($e);
             }
         }
 
+        // Succès
         $this->reference = $demande->reference;
         $this->submitted = true;
     }
+
+
 
     public function ouvrirRecap(): void
     {
