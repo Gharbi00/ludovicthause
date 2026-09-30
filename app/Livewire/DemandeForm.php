@@ -682,7 +682,7 @@ class DemandeForm extends Component
                 return;
             }
 
-            RateLimiter::hit($cle, 60);
+            RateLimiter::hit($cle, 500);
         }
 
         // Les étapes sans date reprennent la date de départ avant contrôle.
