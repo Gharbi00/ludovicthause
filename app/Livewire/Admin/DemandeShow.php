@@ -43,6 +43,11 @@ class DemandeShow extends Component
 
     public array $lieuAdresse = [];
 
+    // Édition de la date d'une étape (Itinéraire) : « changer » → saisie → enregistrer.
+    public array $editionDate = [];
+
+    public array $dateEdition = [];
+
     // Suggestions ville / adresse lors de la modification d'un lieu (Itinéraire).
     public array $suggestionsVille = [];
 
@@ -206,6 +211,90 @@ class DemandeShow extends Component
         $this->suggestionsAdresse[$etapeId] = [];
     }
 
+    /** Passe la date d'une étape en mode édition. */
+    public function changerDateEtape(int $etapeId): void
+    {
+        $etape = $this->demande->etapes->firstWhere('id', $etapeId);
+        if (! $etape) {
+            return;
+        }
+
+        $this->editionDate[$etapeId] = true;
+        $this->dateEdition[$etapeId] = $etape->date ? $etape->date->format('d/m/Y') : '';
+    }
+
+    /** Annule la modification de la date d'une étape. */
+    public function annulerDateEtape(int $etapeId): void
+    {
+        unset($this->editionDate[$etapeId], $this->dateEdition[$etapeId]);
+    }
+
+    /** Enregistre la nouvelle date d'une étape (format JJ/MM/AAAA, année 2000-2100). */
+    public function appliquerDateEtape(int $etapeId): void
+    {
+        $etape = $this->demande->etapes->firstWhere('id', $etapeId);
+        if (! $etape) {
+            return;
+        }
+
+        $this->validate([
+            "dateEdition.$etapeId" => ['required', 'string', 'max:10'],
+        ]);
+
+        $date = $this->parserDateEdition($this->dateEdition[$etapeId] ?? '');
+        if (! $date) {
+            $this->erreur = "Date invalide : saisissez une date au format JJ/MM/AAAA (ex. 10/10/2026).";
+            $this->flash = null;
+
+            return;
+        }
+        if ($date->year < 2000 || $date->year > 2100) {
+            $this->erreur = 'Date invalide (année '.$date->year.') : saisissez une année entre 2000 et 2100.';
+            $this->flash = null;
+
+            return;
+        }
+
+        $etape->update(['date' => $date->toDateString()]);
+        unset($this->editionDate[$etapeId], $this->dateEdition[$etapeId]);
+
+        // Le calcul RSE stocké ne correspond plus à la nouvelle fenêtre de dates :
+        // invalider la grille pour forcer un nouveau calcul avant toute confirmation.
+        $devis = $this->devisActuel();
+        if ($devis) {
+            $payload = $devis->calcul_payload ?? [];
+            $payload['rse'] = [];
+            $devis->update(['calcul_payload' => $payload]);
+        }
+
+        $this->demande->refresh()->load(['categorie', 'etapes.commune', 'devis.vehicule', 'devis.postes']);
+        $this->flash = 'Date de l’étape mise à jour ('.$date->format('d/m/Y').') : relancez le calcul du devis pour la prendre en compte.';
+        $this->erreur = null;
+    }
+
+    /** Saisie tolérante : JJ/MM/AAAA, AAAA-MM-JJ puis repli sur le parsing Carbon. */
+    protected function parserDateEdition(?string $brut): ?Carbon
+    {
+        $brut = trim((string) $brut);
+        if ($brut === '') {
+            return null;
+        }
+
+        foreach (['d/m/Y', 'Y-m-d', 'd/m/y'] as $format) {
+            try {
+                return Carbon::createFromFormat($format, $brut)->startOfDay();
+            } catch (\Throwable) {
+                // format suivant
+            }
+        }
+
+        try {
+            return Carbon::parse($brut)->startOfDay();
+        } catch (\Throwable) {
+            return null;
+        }
+    }
+
     /** Applique la ville sélectionnée à l'étape. */
     public function appliquerVilleEtape(int $etapeId, int $index): void
     {
@@ -342,6 +431,31 @@ class DemandeShow extends Component
         }
 
         return 'vert';
+    }
+
+    /**
+     * Étapes dont la date est hors de la plage plausible (année < 2000 ou > 2100).
+     * Une telle date bloque le calcul : il faut la corriger avant de continuer.
+     *
+     * @return array<int, array{etape_id: int, libelle: string, date: string}>
+     */
+    public function getEtapesDatesInvalidesProperty(): array
+    {
+        $invalides = [];
+        foreach ($this->demande->etapes as $etape) {
+            if (! $etape->date) {
+                continue;
+            }
+            if ($etape->date->year < 2000 || $etape->date->year > 2100) {
+                $invalides[] = [
+                    'etape_id' => (int) $etape->id,
+                    'libelle' => $etape->libelle(),
+                    'date' => $etape->date->format('d/m/Y'),
+                ];
+            }
+        }
+
+        return $invalides;
     }
 
     public function getReglementationAlertesProperty(): array

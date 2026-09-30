@@ -10,6 +10,7 @@ use App\Models\Demande;
 use App\Models\Parametre;
 use App\Services\Geocodage;
 use App\Services\TransportMail;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\Str;
@@ -313,23 +314,6 @@ class DemandeForm extends Component
             }
         }
         unset($etape);
-        $this->synchroniserHorairesRetour();
-    }
-
-    /** Déduit les horaires retour à partir des bornes aller, sans écraser une saisie existante. */
-    protected function synchroniserHorairesRetour(): void
-    {
-        if ($this->retour_type === 'aucun' || $this->etapes_retour === []) {
-            return;
-        }
-        $aller = array_values($this->etapes);
-        $dernier = count($this->etapes_retour) - 1;
-        if (empty($this->etapes_retour[0]['heure_depart'])) {
-            $this->etapes_retour[0]['heure_depart'] = $aller[count($aller) - 1]['heure_arrivee'] ?? '';
-        }
-        if (empty($this->etapes_retour[$dernier]['heure_arrivee'])) {
-            $this->etapes_retour[$dernier]['heure_arrivee'] = $aller[0]['heure_depart'] ?? '';
-        }
     }
 
     protected function verifierChronologieRetour(): bool
@@ -347,6 +331,93 @@ class DemandeForm extends Component
                 $this->addError("etapes_retour.$i.date", 'La date retour ne peut pas précéder le départ. Corrigez-la (date proposée : '.$depart.').');
                 $valide = false;
             }
+        }
+
+        return $valide;
+    }
+
+    /**
+     * Construit un instant (date + heure) ; renvoie null si l'un des deux manque.
+     * Les champs date sont au format AAAA-MM-JJ et les heures au format HH:MM.
+     */
+    protected function momentHoraire(string $date, string $heure): ?Carbon
+    {
+        $date = trim($date);
+        $heure = trim($heure);
+        if ($date === '' || $heure === '') {
+            return null;
+        }
+
+        foreach (['Y-m-d H:i', 'Y-m-d H:i:s', 'd/m/Y H:i'] as $format) {
+            try {
+                return Carbon::createFromFormat($format, $date.' '.$heure);
+            } catch (\Throwable) {
+                // format suivant
+            }
+        }
+
+        try {
+            return Carbon::parse($date.' '.$heure);
+        } catch (\Throwable) {
+            return null;
+        }
+    }
+
+    /**
+     * Contrôle chronologique des horaires (quand les heures sont renseignées) :
+     *  - l'arrivée du trajet aller doit être strictement postérieure à son départ ;
+     *  - l'arrivée du retour doit être strictement postérieure au départ du retour ;
+     *  - le départ et l'arrivée du retour doivent être strictement postérieurs
+     *    au départ du trajet aller.
+     */
+    protected function verifierChronologieHoraires(): bool
+    {
+        $valide = true;
+        $aller = array_values($this->etapes);
+        $iDernierAller = count($aller) - 1;
+
+        $departAller = $this->momentHoraire($aller[0]['date'] ?? '', $aller[0]['heure_depart'] ?? '');
+        $arriveeAller = $this->momentHoraire($aller[$iDernierAller]['date'] ?? '', $aller[$iDernierAller]['heure_arrivee'] ?? '');
+
+        if ($departAller && $arriveeAller && $arriveeAller <= $departAller) {
+            $this->addError(
+                "etapes.$iDernierAller.heure_arrivee",
+                "L'heure d'arrivée doit être strictement postérieure à l'heure de départ du trajet aller."
+            );
+            $valide = false;
+        }
+
+        if ($this->retour_type === 'aucun' || $this->etapes_retour === []) {
+            return $valide;
+        }
+
+        $retour = array_values($this->etapes_retour);
+        $iDernierRetour = count($retour) - 1;
+        $departRetour = $this->momentHoraire($retour[0]['date'] ?? '', $retour[0]['heure_depart'] ?? '');
+        $arriveeRetour = $this->momentHoraire($retour[$iDernierRetour]['date'] ?? '', $retour[$iDernierRetour]['heure_arrivee'] ?? '');
+
+        if ($departRetour && $arriveeRetour && $arriveeRetour <= $departRetour) {
+            $this->addError(
+                "etapes_retour.$iDernierRetour.heure_arrivee",
+                "L'heure d'arrivée du retour doit être strictement postérieure à l'heure de départ du retour."
+            );
+            $valide = false;
+        }
+
+        if ($departAller && $departRetour && $departRetour <= $departAller) {
+            $this->addError(
+                'etapes_retour.0.heure_depart',
+                "L'heure de départ du retour doit être strictement postérieure au départ du trajet aller."
+            );
+            $valide = false;
+        }
+
+        if ($departAller && $arriveeRetour && $arriveeRetour <= $departAller) {
+            $this->addError(
+                "etapes_retour.$iDernierRetour.heure_arrivee",
+                "L'heure d'arrivée du retour doit être strictement postérieure au départ du trajet aller."
+            );
+            $valide = false;
         }
 
         return $valide;
@@ -433,7 +504,7 @@ class DemandeForm extends Component
             $this->reglesEtapes($rules, 'etapes', $this->etapes);
         } else {
             foreach (array_keys($this->etapes) as $i) {
-                $rules["etapes.$i.date"] = ['required', 'date'];
+                $rules["etapes.$i.date"] = $this->regleDate();
             }
         }
         if ($this->retour_type !== 'aucun') {
@@ -441,7 +512,7 @@ class DemandeForm extends Component
                 $this->reglesEtapes($rules, 'etapes_retour', $this->etapes_retour);
             } else {
                 foreach (array_keys($this->etapes_retour) as $i) {
-                    $rules["etapes_retour.$i.date"] = ['required', 'date'];
+                    $rules["etapes_retour.$i.date"] = $this->regleDate();
                 }
             }
         }
@@ -456,7 +527,7 @@ class DemandeForm extends Component
         foreach (array_keys($liste) as $i) {
             $rules["$prefixe.$i.ville"] = ['required', 'string'];
             $rules["$prefixe.$i.latitude"] = ['required', 'numeric'];
-            $rules["$prefixe.$i.date"] = ['required', 'date'];
+            $rules["$prefixe.$i.date"] = $this->regleDate();
             if ($i === 0 || $i === $n - 1) {
                 $rules["$prefixe.$i.adresse"] = ['required', 'string'];
                 if ($this->mode === 'ferme') {
@@ -464,6 +535,36 @@ class DemandeForm extends Component
                 }
             }
         }
+    }
+
+    /**
+     * Règle de validation d'une date d'étape : obligatoire, format de date valide,
+     * et année plausible (2000-2100). Évite les dates aberrantes (ex. année 0020)
+     * qui rendraient le chiffrage / la réglementation impossibles à calculer.
+     *
+     * @return array<int, mixed>
+     */
+    protected function regleDate(): array
+    {
+        return [
+            'required',
+            'date',
+            function (string $attribute, mixed $value, callable $fail): void {
+                if ($value === null || $value === '') {
+                    return;
+                }
+                try {
+                    $annee = (int) Carbon::parse($value)->year;
+                } catch (\Throwable) {
+                    $fail('La date de l’étape est invalide.');
+
+                    return;
+                }
+                if ($annee < 2000 || $annee > 2100) {
+                    $fail("** La date de l'étape est non conforme (année {$annee}) : saisissez une année entre 2000 et 2100. **");
+                }
+            },
+        ];
     }
 
     protected function messages(): array
@@ -504,16 +605,20 @@ class DemandeForm extends Component
         // Les étapes sans date reprennent la date de départ avant contrôle.
         $this->heriterDatesDepart();
 
-        if (! $this->verifierChronologieRetour()) {
-            $this->dispatch('formulaire-invalide');
-
-            return;
-        }
-
         try {
             $data = $this->validate();
         } catch (ValidationException $e) {
             $this->setErrorBag($e->validator->errors());
+            $data = null;
+        }
+
+        // Contrôles chronologiques (après validate(), qui réinitialise le sac d'erreurs).
+        $chronoOk = $this->verifierChronologieRetour();
+        if (! $this->verifierChronologieHoraires()) {
+            $chronoOk = false;
+        }
+
+        if ($data === null || ! $chronoOk) {
             $this->dispatch('formulaire-invalide');
 
             return;
@@ -603,18 +708,26 @@ class DemandeForm extends Component
     public function ouvrirRecap(): void
     {
         $this->heriterDatesDepart();
-        if (! $this->verifierChronologieRetour()) {
+
+        try {
+            $this->validate();
+        } catch (ValidationException $e) {
+            $this->setErrorBag($e->validator->errors());
+        }
+
+        // Contrôles chronologiques (après validate(), qui réinitialise le sac d'erreurs).
+        $chronoOk = $this->verifierChronologieRetour();
+        if (! $this->verifierChronologieHoraires()) {
+            $chronoOk = false;
+        }
+
+        if ($this->getErrorBag()->isNotEmpty() || ! $chronoOk) {
             $this->dispatch('formulaire-invalide');
 
             return;
         }
-        try {
-            $this->validate();
-            $this->showRecap = true;
-        } catch (ValidationException $e) {
-            $this->setErrorBag($e->validator->errors());
-            $this->dispatch('formulaire-invalide');
-        }
+
+        $this->showRecap = true;
     }
 
     public function modifierRecap(): void

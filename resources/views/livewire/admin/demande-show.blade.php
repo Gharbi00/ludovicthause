@@ -62,6 +62,9 @@
             } elseif (str_contains($erreurTexte, 'poste') || str_contains($erreurTexte, 'durée')) {
                 $erreurCible = 'rse-resultat';
                 $erreurEmplacement = 'Aller au détail des horaires et postes';
+            } elseif (str_contains($erreurTexte, 'date') || str_contains($erreurTexte, 'itinéraire')) {
+                $erreurCible = 'itineraire';
+                $erreurEmplacement = 'Aller aux dates de l’itinéraire';
             } elseif (str_contains($erreurTexte, 'override') || str_contains($erreurTexte, 'surcharge')) {
                 $erreurCible = 'surcharges-manuelles';
                 $erreurEmplacement = 'Aller aux surcharges manuelles';
@@ -73,6 +76,27 @@
         <div class="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800" role="alert">
             <p>{{ $erreur }}</p>
             <a href="#{{ $erreurCible }}" x-on:click.prevent="$dispatch('scroll-to-section', { target: '{{ $erreurCible }}' })" class="mt-1 inline-flex font-semibold underline underline-offset-2 hover:text-red-950">{{ $erreurEmplacement }} →</a>
+        </div>
+    @endif
+
+    @if ($this->etapesDatesInvalides !== [])
+        <div id="alerte-dates-invalides" class="reglementation-alert mb-4 rounded-2xl border border-red-300 bg-red-50 p-4 text-sm text-red-800">
+            <div class="flex flex-wrap items-center justify-between gap-3">
+                <span class="font-semibold">⚠ ** Dates d’étape non conformes **</span>
+                <span class="rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-red-700">À corriger</span>
+            </div>
+            <p class="mt-2">Une ou plusieurs étapes ont une date hors de la plage 2000-2100 (ex. <span class="font-semibold">**10/10/0020**</span>). Corrigez-les avant de calculer le devis.</p>
+            <ul class="mt-3 space-y-1">
+                @foreach ($this->etapesDatesInvalides as $invalide)
+                    <li class="flex flex-wrap items-baseline gap-x-2">
+                        <span class="font-semibold">**{{ $invalide['date'] }}**</span>
+                        <span>— {{ $invalide['libelle'] }}</span>
+                        <button type="button" wire:click="changerDateEtape({{ $invalide['etape_id'] }})"
+                                x-on:click="$dispatch('scroll-to-section', { target: 'etape-{{ $invalide['etape_id'] }}' })"
+                                class="font-medium underline underline-offset-2 hover:text-red-950">Corriger la date →</button>
+                    </li>
+                @endforeach
+            </ul>
         </div>
     @endif
 
@@ -181,15 +205,39 @@
                 @endif
             </section>
 
-            <section class="rounded-2xl bg-white shadow-sm ring-1 ring-slate-200 p-6">
+            <section id="itineraire" class="rounded-2xl bg-white shadow-sm ring-1 ring-slate-200 p-6">
                 <h2 class="text-sm font-semibold uppercase tracking-wide text-slate-400 mb-4">Itinéraire</h2>
                 <ol class="grid grid-cols-1 gap-4 sm:grid-cols-2">
                     @foreach ($demande->etapes as $etape)
-                        <li class="min-w-0 rounded-lg border border-slate-200 bg-white p-4">
+                        @php
+                            $dateInvalide = $etape->date !== null && ($etape->date->year < 2000 || $etape->date->year > 2100);
+                        @endphp
+                        <li id="etape-{{ $etape->id }}" class="min-w-0 rounded-lg border bg-white p-4 {{ $dateInvalide ? 'border-red-300 ring-2 ring-red-200' : 'border-slate-200' }}">
                             <div class="flex flex-wrap items-center gap-2">
                                 <span class="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-brand text-[10px] font-semibold text-white">{{ $etape->ordre }}</span>
                                 <span class="font-medium text-slate-800">{{ $etape->libelle() }}</span>
-                                <span class="text-sm text-slate-500">{{ $etape->date?->format('d/m/Y') }}</span>
+                                @if (data_get($editionDate, (string) $etape->id, false))
+                                    <span class="inline-flex items-center gap-1">
+                                        <input type="text" inputmode="numeric" maxlength="10" placeholder="JJ/MM/AAAA"
+                                               wire:model="dateEdition.{{ $etape->id }}"
+                                               class="w-24 rounded border-slate-300 px-2 py-0.5 text-xs shadow-sm focus:border-brand focus:ring-brand">
+                                        <button type="button" wire:click="appliquerDateEtape({{ $etape->id }})"
+                                                class="rounded bg-brand px-2 py-0.5 text-[10px] font-semibold text-white hover:bg-brand-dark">OK</button>
+                                        <button type="button" wire:click="annulerDateEtape({{ $etape->id }})"
+                                                class="rounded border border-slate-300 px-2 py-0.5 text-[10px] text-slate-600 hover:bg-slate-50">Annuler</button>
+                                    </span>
+                                @else
+                                    <span class="text-sm {{ $dateInvalide ? 'font-bold text-red-600' : 'text-slate-500' }}">
+                                        @if ($dateInvalide) **@endif{{ $etape->date?->format('d/m/Y') ?? '—' }}@if ($dateInvalide) **@endif
+                                    </span>
+                                    <button type="button" wire:click="changerDateEtape({{ $etape->id }})"
+                                            class="shrink-0 text-[10px] {{ $dateInvalide ? 'font-semibold text-red-700 underline underline-offset-2' : 'text-brand hover:underline' }}">
+                                        {{ $dateInvalide ? 'corriger la date' : 'changer' }}
+                                    </button>
+                                    @if ($dateInvalide)
+                                        <span class="rounded bg-red-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-red-700">** non conforme **</span>
+                                    @endif
+                                @endif
                             </div>
                             <div class="mt-1 flex flex-wrap gap-2 text-xs text-slate-500">
                                 @if ($etape->heure_arrivee)

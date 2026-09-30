@@ -104,6 +104,11 @@ class MoteurCalcul
         }
         $dateDebut = Carbon::parse($dates->min());
         $dateFin = Carbon::parse($dates->max());
+
+        // Sécurité : une date d'étape aberrante (ex. année 0020 au lieu de 2026)
+        // ferait exploser la fenêtre de jours du calcul RSE (~733 000 jours).
+        $this->validerFenetreDates($dateDebut, $dateFin);
+
         $config = $this->rse->calculer($itineraire->dureeConduiteMinutes, $dateDebut, $dateFin, $postes);
 
         // Paramètres.
@@ -180,6 +185,41 @@ class MoteurCalcul
         ];
 
         return ['devis' => $devis, 'itineraire' => $itineraire, 'rse' => $config];
+    }
+
+    /**
+     * Sécurité : refuse les fenêtres de dates incohérentes (donnée erronée) avant
+     * de lancer le calcul d'itinéraire / RSE. Une année hors [2000-2100] (ex. 0020),
+     * une fin antérieure au début ou un écart > 370 jours rendraient le calcul
+     * inexploitable (boucle RSE de centaines de milliers de jours).
+     *
+     * @throws RuntimeException
+     */
+    protected function validerFenetreDates(Carbon $debut, Carbon $fin): void
+    {
+        $anneeInvalide = function (Carbon $d): ?int {
+            return ($d->year < 2000 || $d->year > 2100) ? $d->year : null;
+        };
+
+        $annee = $anneeInvalide($debut) ?? $anneeInvalide($fin);
+        if ($annee !== null) {
+            throw new RuntimeException(
+                "Date d'étape invalide (année {$annee}) : corrigez les dates de l'itinéraire (une année entre 2000 et 2100 est attendue)."
+            );
+        }
+
+        if ($fin->lt($debut)) {
+            throw new RuntimeException(
+                'Dates incohérentes : la dernière étape ('.$fin->format('d/m/Y').') est antérieure à la première ('.$debut->format('d/m/Y').').'
+            );
+        }
+
+        $jours = (int) $debut->copy()->startOfDay()->diffInDays($fin->copy()->startOfDay()) + 1;
+        if ($jours > 370) {
+            throw new RuntimeException(
+                "Écart de dates trop grand ({$jours} jours entre la première et la dernière étape) : vérifiez les dates de l'itinéraire."
+            );
+        }
     }
 
     private function depot(): Commune

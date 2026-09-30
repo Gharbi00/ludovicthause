@@ -165,6 +165,7 @@
                                             <label class="block text-xs font-medium text-slate-600">Heure d'arrivée</label>
                                             <input type="time" wire:model="etapes.{{ $i }}.heure_arrivee"
                                                    class="mt-1 w-full rounded-lg border-slate-300 shadow-sm focus:border-brand focus:ring-brand">
+                                            @error("etapes.$i.heure_arrivee") <p data-erreur class="mt-1 text-xs text-red-600">{{ $message }}</p> @enderror
                                         </div>
                                     @endif
                                     @if (! $estDernier)
@@ -172,6 +173,7 @@
                                             <label class="block text-xs font-medium text-slate-600">Heure de départ</label>
                                             <input type="time" wire:model="etapes.{{ $i }}.heure_depart"
                                                    class="mt-1 w-full rounded-lg border-slate-300 shadow-sm focus:border-brand focus:ring-brand">
+                                            @error("etapes.$i.heure_depart") <p data-erreur class="mt-1 text-xs text-red-600">{{ $message }}</p> @enderror
                                         </div>
                                     @endif
                                 </div>
@@ -260,6 +262,7 @@
                                                 <label class="block text-xs font-medium text-slate-600">Heure d'arrivée</label>
                                                 <input type="time" wire:model="etapes_retour.{{ $i }}.heure_arrivee"
                                                        class="mt-1 w-full rounded-lg border-slate-300 shadow-sm focus:border-brand focus:ring-brand">
+                                                @error("etapes_retour.$i.heure_arrivee") <p data-erreur class="mt-1 text-xs text-red-600">{{ $message }}</p> @enderror
                                             </div>
                                         @endif
                                         @if (! $rDernier)
@@ -267,6 +270,7 @@
                                                 <label class="block text-xs font-medium text-slate-600">Heure de départ</label>
                                                 <input type="time" wire:model="etapes_retour.{{ $i }}.heure_depart"
                                                        class="mt-1 w-full rounded-lg border-slate-300 shadow-sm focus:border-brand focus:ring-brand">
+                                                @error("etapes_retour.$i.heure_depart") <p data-erreur class="mt-1 text-xs text-red-600">{{ $message }}</p> @enderror
                                             </div>
                                         @endif
                                     </div>

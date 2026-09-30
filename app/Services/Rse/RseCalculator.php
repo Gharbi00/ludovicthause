@@ -20,6 +20,15 @@ class RseCalculator
         $nbJours = (int) $dateDebut->copy()->startOfDay()->diffInDays($dateFin->copy()->startOfDay()) + 1;
         $nbJours = max(1, $nbJours);
 
+        // Sécurité : une date aberrante (ex. année 0020 au lieu de 2026) ou un écart
+        // démesuré ferait exploser la grille journalière (des centaines de milliers de jours).
+        if ($dateDebut->year < 2000 || $dateDebut->year > 2100 || $dateFin->year < 2000 || $dateFin->year > 2100) {
+            throw new \RuntimeException('Date(s) d’étape invalide(s) (année hors 2000-2100) : corrigez les dates de l’itinéraire.');
+        }
+        if ($nbJours > 370) {
+            throw new \RuntimeException('Écart de dates trop grand ('.$nbJours.' jours) : vérifiez les dates de l’itinéraire.');
+        }
+
         $nuitees = max(0, $nbJours - 1);
 
         $conduiteMaxJour = (int) Parametre::get('rse_conduite_journaliere_max_min', 540); // 9h
