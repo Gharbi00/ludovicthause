@@ -684,14 +684,6 @@ class DemandeForm extends Component
         $isTesting = app()->environment('testing');
         $cle = 'demande:' . request()->ip();
 
-        if (!$isTesting && RateLimiter::tooManyAttempts($cle, 5)) {
-            $this->addError(
-                'rate_limit',
-                'Trop de demandes envoyées. Merci de réessayer plus tard.'
-            );
-
-            return;
-        }
 
         // Les étapes sans date reprennent la date de départ avant contrôle.
         $this->heriterDatesDepart();
