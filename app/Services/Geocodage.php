@@ -168,6 +168,9 @@ class Geocodage
             return [];
         }
 
+        // Contexte de la ville choisie : sert à écarter les adresses incohérentes.
+        $cible = $this->cibleVille($contexte);
+
         $carnet = Lieu::query()
             ->where(function ($query) use ($q) {
                 $query->where('libelle', 'like', '%'.$q.'%')
@@ -175,7 +178,7 @@ class Geocodage
                     ->orWhere('ville', 'like', '%'.$q.'%');
             })
             ->orderByDesc('utilisations')
-            ->limit(10)
+            ->limit(40)
             ->get()
             ->map(fn (Lieu $lieu) => [
                 'label' => '★ Carnet LTT · '.$lieu->libelle.($lieu->adresse_normalisee ? ' — '.$lieu->adresse_normalisee : ''),
@@ -184,7 +187,13 @@ class Geocodage
                 'source' => 'carnet',
                 'provider_id' => (string) $lieu->id,
                 'contexte' => $lieu->ville,
-            ])->all();
+                'ville_nom' => (string) $lieu->ville,
+                'code_postal' => $lieu->code_postal,
+            ])
+            ->filter(fn (array $adresse) => $this->adresseCoherente($adresse, $cible))
+            ->take(10)
+            ->values()
+            ->all();
 
         // France : BAN restreinte à la commune (citycode).
         if (! empty($contexte['citycode'])) {
@@ -201,14 +210,17 @@ class Geocodage
                         if (! is_array($c) || count($c) < 2) {
                             continue;
                         }
-                        $out[] = $this->resultatAdresse($f, $c, 'ban');
+                        $adresse = $this->resultatAdresse($f, $c, 'ban');
+                        if ($this->adresseCoherente($adresse, $cible)) {
+                            $out[] = $adresse;
+                        }
                     }
 
-                    $lieux = $this->photonAdresses($q, $contexte);
+                    $lieux = $this->photonAdresses($q, $cible);
                     $vus = [];
                     $fusion = [];
                     foreach (array_merge($lieux, $out) as $adresse) {
-                        if (isset($vus[$adresse['label']])) {
+                        if (isset($vus[$adresse['label']]) || ! $this->adresseCoherente($adresse, $cible)) {
                             continue;
                         }
                         $vus[$adresse['label']] = true;
@@ -223,50 +235,183 @@ class Geocodage
             }
 
             // Secours OpenStreetMap lorsque la BAN est indisponible ou sans résultat.
-            return array_slice(array_merge($carnet, $this->photonAdresses($q, $contexte)), 0, 10);
+            return array_slice(array_merge($carnet, $this->filtrerCoherentes($this->photonAdresses($q, $cible), $cible)), 0, 10);
         }
 
-        // Étranger : Photon biaisé autour de la ville.
-        try {
-            $params = ['q' => $q.' '.($contexte['ville'] ?? ''), 'limit' => 7, 'lang' => 'fr'];
-            if (! empty($contexte['lat']) && ! empty($contexte['lng'])) {
-                $params['lat'] = $contexte['lat'];
-                $params['lon'] = $contexte['lng'];
-            }
-            $resp = $this->http()->get(self::URL_PHOTON, $params);
-            if (! $resp->ok()) {
-                return [];
-            }
-            $out = [];
-            $vus = [];
-            foreach ($resp->json('features', []) as $f) {
-                $p = data_get($f, 'properties', []);
-                $c = data_get($f, 'geometry.coordinates');
-                if (! is_array($c) || count($c) < 2) {
-                    continue;
-                }
-                $label = $this->labelPhoton($p);
-                if ($label === '' || isset($vus[$label])) {
-                    continue;
-                }
-                $vus[$label] = true;
-                $out[] = [
-                    'label' => $label,
-                    'adresse_normalisee' => $label,
-                    'lat' => (float) $c[1],
-                    'lng' => (float) $c[0],
-                    'source' => 'photon',
-                    'provider_id' => (string) (($p['osm_type'] ?? '').':'.($p['osm_id'] ?? '')),
-                    'contexte' => $p['city'] ?? ($contexte['ville'] ?? null),
-                ];
-            }
+        // Étranger : Photon biaisé autour de la ville, recoupé avec la ville choisie.
+        return array_slice(array_merge($carnet, $this->filtrerCoherentes($this->photonAdresses($q, $cible), $cible)), 0, 10);
+    }
 
-            return array_slice(array_merge($carnet, $out), 0, 10);
-        } catch (\Throwable $e) {
-            report($e);
+    // ------------------------------------------------------------------
+    // Cohérence ville / adresse : une suggestion doit appartenir à la ville choisie.
+    // ------------------------------------------------------------------
 
-            return array_slice($carnet, 0, 10);
+    /** Décompose le contexte ville d'une étape en informations comparables. */
+    protected function cibleVille(array $contexte): array
+    {
+        $label = trim((string) ($contexte['ville'] ?? ''));
+
+        // « Lyon 5e arrondissement (69005) » -> « Lyon » ; « Milan, Italie » -> « Milan ».
+        $nom = trim((string) preg_replace('/\(.*?\)/u', ' ', $label));
+        $parties = preg_split('/\s*,\s*/u', $nom) ?: [$nom];
+        $nom = trim((string) ($parties[0] ?? ''));
+        $nom = trim((string) preg_replace('/\b\d+\s*(?:er|e|ème|eme)\b/iu', ' ', $nom));
+        $nom = trim((string) preg_replace('/\barrondissements?\b/iu', ' ', $nom));
+        // Codes postaux éventuellement accolés au nom (« Milano 20121 »).
+        $nom = trim((string) preg_replace('/\b\d{4,5}\b/u', ' ', $nom));
+        $nom = trim((string) preg_replace('/\s+/u', ' ', $nom));
+
+        $lat = (isset($contexte['lat']) && is_numeric($contexte['lat'])) ? (float) $contexte['lat'] : null;
+        $lng = (isset($contexte['lng']) && is_numeric($contexte['lng'])) ? (float) $contexte['lng'] : null;
+        if ($lat === 0.0 && $lng === 0.0) { // coordonnées absentes : on ne les utilise pas.
+            $lat = null;
+            $lng = null;
         }
+
+        return [
+            'citycode' => ($contexte['citycode'] ?? null) ?: null,
+            'code_postal' => $this->extraireCodePostal($label),
+            'arrondissement' => $this->numeroArrondissement($label),
+            'ville_libelle' => $nom,
+            'ville_simple' => Commune::normaliser($nom),
+            'lat' => $lat,
+            'lng' => $lng,
+        ];
+    }
+
+    /** Numéro d'arrondissement d'un libellé (« Lyon 5e arrondissement » -> 5). */
+    protected function numeroArrondissement(?string $label): ?int
+    {
+        if ($label === null || $label === '') {
+            return null;
+        }
+
+        return preg_match('/\b(\d{1,2})\s*(?:er|e|ème|eme)\b/iu', $label, $m) === 1 ? (int) $m[1] : null;
+    }
+
+    /** Décompose une suggestion d'adresse en informations comparables. */
+    protected function cibleAdresse(array $adresse): array
+    {
+        $label = (string) ($adresse['label'] ?? '');
+        $normalisee = (string) ($adresse['adresse_normalisee'] ?? '');
+        $ville = (string) ($adresse['ville_nom'] ?? $adresse['contexte'] ?? '');
+
+        $codePostal = $this->extraireCodePostal((string) ($adresse['code_postal'] ?? ''));
+        if ($codePostal === null) {
+            $codePostal = $this->extraireCodePostal($normalisee) ?? $this->extraireCodePostal($label);
+        }
+
+        $lat = (isset($adresse['lat']) && is_numeric($adresse['lat'])) ? (float) $adresse['lat'] : null;
+        $lng = (isset($adresse['lng']) && is_numeric($adresse['lng'])) ? (float) $adresse['lng'] : null;
+        if ($lat === 0.0 && $lng === 0.0) {
+            $lat = null;
+            $lng = null;
+        }
+
+        return [
+            'code_postal' => $codePostal,
+            'arrondissement' => $this->numeroArrondissement($ville),
+            'citycode' => ($adresse['citycode'] ?? null) ?: null,
+            'ville_simple' => Commune::normaliser($ville),
+            'lat' => $lat,
+            'lng' => $lng,
+        ];
+    }
+
+    /** Premier code postal (5 chiffres) trouvé dans un texte. */
+    protected function extraireCodePostal(?string $texte): ?string
+    {
+        if ($texte === null || $texte === '') {
+            return null;
+        }
+
+        return preg_match('/\b(\d{5})\b/', $texte, $m) === 1 ? $m[1] : null;
+    }
+
+    /**
+     * Une suggestion est cohérente lorsqu'elle se situe dans la ville choisie.
+     * Le code postal tranche en priorité (indispensable pour les grandes villes à
+     * arrondissements comme Lyon / Paris / Marseille), puis le nom de ville, et
+     * enfin la proximité géographique autour du centre-ville.
+     */
+    protected function adresseCoherente(array $adresse, array $cible): bool
+    {
+        $aContexte = ($cible['code_postal'] ?? null) !== null
+            || ($cible['ville_simple'] ?? '') !== ''
+            || ($cible['lat'] ?? null) !== null
+            || ($cible['lng'] ?? null) !== null;
+        if (! $aContexte) {
+            return true; // aucune ville sélectionnée : aucune restriction.
+        }
+
+        $candidat = $this->cibleAdresse($adresse);
+
+        // 1) Code INSEE (citycode) : identifiant officiel le plus fiable en France.
+        if (($cible['citycode'] ?? null) !== null && $candidat['citycode'] !== null) {
+            return $candidat['citycode'] === $cible['citycode'];
+        }
+
+        // 2) Code postal : décisif sauf pour les codes « …000 » qui couvrent toute la commune.
+        $cpCible = $cible['code_postal'] ?? null;
+        $cpCandidat = $candidat['code_postal'];
+        if ($cpCible !== null && $cpCandidat !== null) {
+            if ($cpCandidat === $cpCible) {
+                return true;
+            }
+            if (! str_ends_with($cpCible, '000')) {
+                return false;
+            }
+        }
+
+        // 4) Nom de ville : deux villes différentes ne sont pas cohérentes.
+        $nomCible = (string) ($cible['ville_simple'] ?? '');
+        $nomCandidat = (string) $candidat['ville_simple'];
+        if ($nomCible !== '' && $nomCandidat !== '') {
+            return $nomCandidat === $nomCible;
+        }
+
+        // 5) Dernier recours (information de ville manquante d'un côté) : proximité.
+        return $this->procheDuContexte($candidat, $cible);
+    }
+
+    /** La suggestion reste-t-elle dans un rayon raisonnable autour de la ville ? */
+    protected function procheDuContexte(array $candidat, array $cible): bool
+    {
+        if ($candidat['lat'] === null || $candidat['lng'] === null
+            || ($cible['lat'] ?? null) === null || ($cible['lng'] ?? null) === null) {
+            return true; // impossible de trancher : on conserve la suggestion.
+        }
+
+        return $this->distanceKm($candidat['lat'], $candidat['lng'], $cible['lat'], $cible['lng']) <= 30.0;
+    }
+
+    /** Filtre une liste de suggestions : cohérence avec la ville + suppression des doublons. */
+    protected function filtrerCoherentes(array $adresses, array $cible): array
+    {
+        $out = [];
+        $vus = [];
+        foreach ($adresses as $adresse) {
+            $label = (string) ($adresse['label'] ?? '');
+            if ($label === '' || isset($vus[$label]) || ! $this->adresseCoherente($adresse, $cible)) {
+                continue;
+            }
+            $vus[$label] = true;
+            $out[] = $adresse;
+        }
+
+        return $out;
+    }
+
+    /** Distance approximative (km) entre deux points géographiques. */
+    protected function distanceKm(float $lat1, float $lng1, float $lat2, float $lng2): float
+    {
+        $rayon = 6371.0;
+        $dLat = deg2rad($lat2 - $lat1);
+        $dLng = deg2rad($lng2 - $lng1);
+        $a = (sin($dLat / 2) ** 2)
+            + cos(deg2rad($lat1)) * cos(deg2rad($lat2)) * (sin($dLng / 2) ** 2);
+
+        return 2 * $rayon * asin(min(1.0, sqrt($a)));
     }
 
     /** Normalise un résultat BAN en lieu exploitable par le formulaire et le carnet. */
@@ -282,21 +427,24 @@ class Geocodage
             'source' => $source,
             'provider_id' => (string) (data_get($properties, 'id') ?: data_get($properties, 'banId', '')),
             'contexte' => data_get($properties, 'city'),
+            'ville_nom' => data_get($properties, 'city'),
+            'code_postal' => data_get($properties, 'postcode'),
+            'citycode' => data_get($properties, 'citycode'),
         ];
     }
 
     /** Recherche d'adresses via Photon, utilisée comme secours pour la France et l'Europe. */
-    protected function photonAdresses(string $q, array $contexte): array
+    protected function photonAdresses(string $q, array $cible): array
     {
         try {
             $params = [
-                'q' => $q.' '.($contexte['ville'] ?? ''),
+                'q' => trim($q.' '.($cible['ville_libelle'] ?? '')),
                 'limit' => 7,
                 'lang' => 'fr',
             ];
-            if ($contexte['lat'] !== null && $contexte['lng'] !== null) {
-                $params['lat'] = $contexte['lat'];
-                $params['lon'] = $contexte['lng'];
+            if (! empty($cible['lat']) && ! empty($cible['lng'])) {
+                $params['lat'] = $cible['lat'];
+                $params['lon'] = $cible['lng'];
             }
 
             $resp = $this->http()->get(self::URL_PHOTON, $params);
@@ -321,7 +469,9 @@ class Geocodage
                     'lng' => (float) $c[0],
                     'source' => 'photon',
                     'provider_id' => (string) (($p['osm_type'] ?? '').':'.($p['osm_id'] ?? '')),
-                    'contexte' => $p['city'] ?? ($contexte['ville'] ?? null),
+                    'contexte' => $p['city'] ?? ($cible['ville_libelle'] ?? null),
+                    'ville_nom' => (string) ($p['city'] ?? ''),
+                    'code_postal' => $p['postcode'] ?? null,
                 ];
             }
 

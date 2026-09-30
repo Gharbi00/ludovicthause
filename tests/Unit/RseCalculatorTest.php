@@ -6,13 +6,16 @@ use App\Livewire\Admin\DemandeShow;
 use App\Livewire\DemandeForm;
 use App\Models\Demande;
 use App\Models\Devis;
+use App\Models\Lieu;
 use App\Models\Parametre;
 use App\Models\Poste;
+use App\Services\Geocodage;
 use App\Services\Itineraire\ItineraireProvider;
 use App\Services\MoteurCalcul;
 use App\Services\Rse\RseCalculator;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Http;
 use Livewire\Livewire;
 use Tests\TestCase;
 
@@ -407,6 +410,170 @@ class RseCalculatorTest extends TestCase
         $form->ouvrirRecap();
 
         $this->assertTrue($form->showRecap, 'Des horaires cohérents doivent ouvrir le récapitulatif.');
+    }
+
+    /** Le carnet ne doit proposer que des lieux de la ville sélectionnée. */
+    public function test_carnet_filtre_les_adresses_incoherentes_avec_la_ville(): void
+    {
+        Lieu::create(['libelle' => 'Carnet LTT', 'adresse_normalisee' => 'Rue Tony Tollet, 69002 Lyon, France',
+            'ville' => 'Lyon 2e arrondissement', 'code_postal' => '69002', 'latitude' => 45.7536,
+            'longitude' => 4.8357, 'source' => 'manuel', 'utilisations' => 10]);
+        Lieu::create(['libelle' => 'Carnet LTT', 'adresse_normalisee' => 'Rue de la Republique, 69005 Lyon, France',
+            'ville' => 'Lyon 5e arrondissement', 'code_postal' => '69005', 'latitude' => 45.7578,
+            'longitude' => 4.8085, 'source' => 'manuel', 'utilisations' => 5]);
+
+        $geo = app(Geocodage::class);
+        $resultats = $geo->rechercherAdresses('Rue', [
+            'citycode' => '69385',
+            'ville' => 'Lyon 5e arrondissement (69005)',
+            'lat' => 45.7578,
+            'lng' => 4.8085,
+        ]);
+
+        $labels = collect($resultats)->pluck('label')->implode(' | ');
+        $this->assertStringContainsString('69005', $labels);
+        $this->assertStringNotContainsString('69002', $labels, 'Une adresse du 2e arrondissement ne doit pas être proposée pour le 5e.');
+    }
+
+    /** Les adresses BAN sont restreintes par code postal / ville cohérente. */
+    public function test_ban_ecarte_les_adresses_hors_commune(): void
+    {
+        Http::fake([
+            'api-adresse.data.gouv.fr/*' => Http::response(['features' => [
+                ['geometry' => ['coordinates' => [4.8085, 45.7578]],
+                    'properties' => ['label' => 'Rue Tony Tollet, 69005 Lyon, France', 'city' => 'Lyon', 'postcode' => '69005', 'citycode' => '69385']],
+                ['geometry' => ['coordinates' => [4.8357, 45.7536]],
+                    'properties' => ['label' => 'Rue Tony Tollet, 69002 Lyon, France', 'city' => 'Lyon', 'postcode' => '69002', 'citycode' => '69382']],
+                ['geometry' => ['coordinates' => [2.35, 48.86]],
+                    'properties' => ['label' => 'Rue Tony Tollet, 75002 Paris, France', 'city' => 'Paris', 'postcode' => '75002', 'citycode' => '75102']],
+            ]]),
+            'photon.komoot.io/*' => Http::response(['features' => []]),
+        ]);
+
+        $resultats = app(Geocodage::class)->rechercherAdresses('Rue Tony Tollet', [
+            'citycode' => '69385',
+            'ville' => 'Lyon 5e arrondissement (69005)',
+            'lat' => 45.7578,
+            'lng' => 4.8085,
+        ]);
+
+        $labels = collect($resultats)->pluck('label')->all();
+        $this->assertNotEmpty($labels);
+        foreach ($labels as $label) {
+            $this->assertStringContainsString('69005', $label, "L'adresse « {$label} » n'appartient pas au 5e arrondissement.");
+        }
+    }
+
+    /** Le formulaire de demande propose des adresses cohérentes avec la ville choisie. */
+    public function test_formulaire_filtre_les_suggestions_d_adresse_par_ville(): void
+    {
+        Lieu::create(['libelle' => 'Carnet LTT', 'adresse_normalisee' => 'Rue Tony Tollet, 69002 Lyon, France',
+            'ville' => 'Lyon 2e arrondissement', 'code_postal' => '69002', 'latitude' => 45.7536,
+            'longitude' => 4.8357, 'source' => 'manuel', 'utilisations' => 10]);
+        Lieu::create(['libelle' => 'Carnet LTT', 'adresse_normalisee' => 'Rue Tony Tollet, 69005 Lyon, France',
+            'ville' => 'Lyon 5e arrondissement', 'code_postal' => '69005', 'latitude' => 45.7578,
+            'longitude' => 4.8085, 'source' => 'manuel', 'utilisations' => 5]);
+
+        Http::fake(['*' => Http::response(['features' => []])]);
+
+        $form = $this->formulaireValide();
+        $form->etapes = [
+            ['ville' => 'Lyon 5e arrondissement (69005)', 'citycode' => '69385',
+                'ville_lat' => 45.7578, 'ville_lng' => 4.8085, 'adresse' => '', 'adresse_validee' => false],
+        ];
+
+        $form->updated('etapes.0.adresse_recherche', 'Rue Tony');
+
+        $labels = collect($form->suggestionsAdresse[0] ?? [])->pluck('label')->implode(' | ');
+        $this->assertStringContainsString('69005', $labels);
+        $this->assertStringNotContainsString('69002', $labels);
+    }
+
+    /** Les suggestions d'adresse du secrétariat sont aussi filtrées par la ville de l'étape. */
+    public function test_secretariat_filtre_les_suggestions_d_adresse_par_ville(): void
+    {
+        Lieu::create(['libelle' => 'Carnet LTT', 'adresse_normalisee' => 'Rue Tony Tollet, 69002 Lyon, France',
+            'ville' => 'Lyon 2e arrondissement', 'code_postal' => '69002', 'latitude' => 45.7536,
+            'longitude' => 4.8357, 'source' => 'manuel', 'utilisations' => 10]);
+        Lieu::create(['libelle' => 'Carnet LTT', 'adresse_normalisee' => 'Rue Tony Tollet, 69005 Lyon, France',
+            'ville' => 'Lyon 5e arrondissement', 'code_postal' => '69005', 'latitude' => 45.7578,
+            'longitude' => 4.8085, 'source' => 'manuel', 'utilisations' => 5]);
+
+        Http::fake(['*' => Http::response(['features' => []])]);
+
+        $demande = $this->demandeAvecEtapeVille('Lyon 5e arrondissement (69005)');
+        $etapeId = $demande->etapes()->first()->id;
+
+        $test = Livewire::test(DemandeShow::class, ['demande' => $demande]);
+        $test->set("lieuVilleLat.{$etapeId}", 45.7578)
+            ->set("lieuVilleLng.{$etapeId}", 4.8085)
+            ->set("lieuCitycode.{$etapeId}", '69385')
+            ->set("adresseRecherche.{$etapeId}", 'Rue Tony');
+
+        $labels = collect($test->get("suggestionsAdresse.{$etapeId}") ?? [])->pluck('label')->implode(' | ');
+        $this->assertStringContainsString('69005', $labels);
+        $this->assertStringNotContainsString('69002', $labels);
+    }
+
+    /** Un lieu du carnet situé dans un autre arrondissement est écarté (même sans code postal). */
+    public function test_carnet_ecarte_un_autre_arrondissement_meme_sans_code_postal(): void
+    {
+        Lieu::create(['libelle' => 'Carnet LTT', 'adresse_normalisee' => 'Lieu Lyon 2e',
+            'ville' => 'Lyon 2e arrondissement', 'code_postal' => null, 'latitude' => 45.7536,
+            'longitude' => 4.8357, 'source' => 'manuel', 'utilisations' => 20]);
+
+        Http::fake(['*' => Http::response(['features' => []])]);
+
+        $resultats = app(Geocodage::class)->rechercherAdresses('Lieu Lyon', [
+            'citycode' => '69385',
+            'ville' => 'Lyon 5e arrondissement (69005)',
+            'lat' => 45.7578,
+            'lng' => 4.8085,
+        ]);
+
+        $this->assertSame([], $resultats, 'Un lieu du 2e arrondissement ne doit pas être proposé pour le 5e.');
+    }
+
+    /** Un code postal « commune » (…000) laisse passer toutes les adresses de la ville. */
+    public function test_code_postal_de_commune_accepte_toute_la_ville(): void
+    {
+        Http::fake([
+            'api-adresse.data.gouv.fr/*' => Http::response(['features' => [
+                ['geometry' => ['coordinates' => [3.16, 46.99]],
+                    'properties' => ['label' => 'Rue du Commerce, 58000 Nevers, France', 'city' => 'Nevers', 'postcode' => '58000', 'citycode' => '58194']],
+            ]]),
+            'photon.komoot.io/*' => Http::response(['features' => []]),
+        ]);
+
+        $resultats = app(Geocodage::class)->rechercherAdresses('Rue du Commerce', [
+            'citycode' => '58194',
+            'ville' => 'Nevers (58000)',
+            'lat' => 46.9896,
+            'lng' => 3.1596,
+        ]);
+
+        $this->assertCount(1, $resultats);
+        $this->assertStringContainsString('58000', $resultats[0]['label']);
+    }
+
+    /** Demande minimale avec une étape portant la ville indiquée. */
+    protected function demandeAvecEtapeVille(string $ville): Demande
+    {
+        $demande = Demande::create([
+            'reference' => 'DEM-VILLE-'.now()->format('YmdHis').'-'.random_int(100, 999),
+            'mode' => 'ferme',
+            'type_trajet' => 'simple',
+            'nb_passagers' => 1,
+            'client_nom' => 'Test',
+            'client_email' => 'test@test.com',
+            'statut' => 'en_traitement',
+        ]);
+        $demande->etapes()->create([
+            'ordre' => 1, 'date' => '2026-10-10', 'ville' => $ville,
+            'adresse' => '', 'latitude' => 45.7578, 'longitude' => 4.8085,
+        ]);
+
+        return $demande->fresh('etapes');
     }
 
     /** Formulaire minimal valide (mode estimation) pour tester les contrôles. */

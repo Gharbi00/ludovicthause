@@ -310,6 +310,12 @@
                                                                 </li>
                                                             @endforeach
                                                         </ul>
+                                                    @elseif (mb_strlen(trim((string) data_get($adresseRecherche, (string) $etape->id, ''))) >= 3)
+                                                        <p class="mt-1 rounded border border-amber-200 bg-amber-50 px-2 py-1 text-[10px] text-amber-800">
+                                                            Aucune adresse trouvée dans
+                                                            <strong>{{ $lieuVille[$etape->id] ?? 'la ville choisie' }}</strong>.
+                                                            Vérifiez la ville ou la saisie.
+                                                        </p>
                                                     @endif
                                                 </div>
                                             @elseif (! empty(data_get($lieuAdresse, (string) $etape->id, '')))

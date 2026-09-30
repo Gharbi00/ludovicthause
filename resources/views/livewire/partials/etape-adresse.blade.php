@@ -72,6 +72,11 @@
                             </li>
                         @endforeach
                     </ul>
+                @elseif (mb_strlen(trim((string) data_get($etape, 'adresse_recherche', ''))) >= 3)
+                    <p class="mt-1 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                        Aucune adresse trouvée dans <strong>{{ $etape['ville'] }}</strong>.
+                        Vérifiez la ville choisie ou la saisie.
+                    </p>
                 @endif
             </div>
         @endif

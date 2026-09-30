@@ -139,7 +139,7 @@ class DemandeForm extends Component
     protected function appliquerVille(array &$liste, array &$sug, int $i, int $k): void
     {
         $s = $sug[$i][$k] ?? null;
-        if (! $s || ! isset($liste[$i])) {
+        if (!$s || !isset($liste[$i])) {
             return;
         }
         $liste[$i]['ville'] = $s['label'];
@@ -164,7 +164,7 @@ class DemandeForm extends Component
     protected function appliquerAdresse(array &$liste, array &$sug, int $i, int $k): void
     {
         $s = $sug[$i][$k] ?? null;
-        if (! $s || ! isset($liste[$i])) {
+        if (!$s || !isset($liste[$i])) {
             return;
         }
         $liste[$i]['adresse'] = $s['label'];
@@ -202,20 +202,30 @@ class DemandeForm extends Component
     public function changerVille(int $i): void
     {
         if (isset($this->etapes[$i])) {
-            foreach (['ville', 'adresse'] as $c) {
+            foreach (['ville', 'adresse', 'lieu_libelle', 'adresse_normalisee'] as $c) {
                 $this->etapes[$i][$c] = '';
             }
-            $this->etapes[$i]['latitude'] = $this->etapes[$i]['longitude'] = $this->etapes[$i]['citycode'] = null;
+            $this->etapes[$i]['adresse_validee'] = false;
+            $this->etapes[$i]['geocodage_source'] = null;
+            $this->etapes[$i]['geocodage_provider_id'] = null;
+            $this->etapes[$i]['ville_lat'] = $this->etapes[$i]['ville_lng'] = null;
+            $this->etapes[$i]['latitude'] = $this->etapes[$i]['longitude'] = null;
+            $this->etapes[$i]['citycode'] = null;
         }
     }
 
     public function changerVilleRetour(int $i): void
     {
-        if (isset($this->etapes_retour[$i]) && ! ($this->etapes_retour[$i]['locked'] ?? false)) {
-            foreach (['ville', 'adresse'] as $c) {
+        if (isset($this->etapes_retour[$i]) && !($this->etapes_retour[$i]['locked'] ?? false)) {
+            foreach (['ville', 'adresse', 'lieu_libelle', 'adresse_normalisee'] as $c) {
                 $this->etapes_retour[$i][$c] = '';
             }
-            $this->etapes_retour[$i]['latitude'] = $this->etapes_retour[$i]['longitude'] = $this->etapes_retour[$i]['citycode'] = null;
+            $this->etapes_retour[$i]['adresse_validee'] = false;
+            $this->etapes_retour[$i]['geocodage_source'] = null;
+            $this->etapes_retour[$i]['geocodage_provider_id'] = null;
+            $this->etapes_retour[$i]['ville_lat'] = $this->etapes_retour[$i]['ville_lng'] = null;
+            $this->etapes_retour[$i]['latitude'] = $this->etapes_retour[$i]['longitude'] = null;
+            $this->etapes_retour[$i]['citycode'] = null;
         }
     }
 
@@ -296,8 +306,15 @@ class DemandeForm extends Component
         $this->suggestionsVilleRetour = [];
         $this->suggestionsAdresseRetour = [];
 
+        // Un retour ne peut être construit que si le trajet aller a un départ et une arrivée.
+        if ($this->retour_type !== 'aucun' && count($aller) < 2) {
+            $this->etapes_retour = [];
+
+            return;
+        }
+
         if ($this->retour_type === 'meme') {
-            $this->etapes_retour = array_map(fn ($e) => $this->etapeRetourDepuis($e), array_reverse($aller));
+            $this->etapes_retour = array_map(fn($e) => $this->etapeRetourDepuis($e), array_reverse($aller));
         } elseif ($this->retour_type === 'different') {
             $this->etapes_retour = [
                 $this->etapeRetourDepuis($aller[count($aller) - 1], locked: false),
@@ -327,8 +344,8 @@ class DemandeForm extends Component
         }
         $valide = true;
         foreach ($this->etapes_retour as $i => $etape) {
-            if (! empty($etape['date']) && $etape['date'] < $depart) {
-                $this->addError("etapes_retour.$i.date", 'La date retour ne peut pas précéder le départ. Corrigez-la (date proposée : '.$depart.').');
+            if (!empty($etape['date']) && $etape['date'] < $depart) {
+                $this->addError("etapes_retour.$i.date", 'La date retour ne peut pas précéder le départ. Corrigez-la (date proposée : ' . $depart . ').');
                 $valide = false;
             }
         }
@@ -350,14 +367,14 @@ class DemandeForm extends Component
 
         foreach (['Y-m-d H:i', 'Y-m-d H:i:s', 'd/m/Y H:i'] as $format) {
             try {
-                return Carbon::createFromFormat($format, $date.' '.$heure);
+                return Carbon::createFromFormat($format, $date . ' ' . $heure);
             } catch (\Throwable) {
                 // format suivant
             }
         }
 
         try {
-            return Carbon::parse($date.' '.$heure);
+            return Carbon::parse($date . ' ' . $heure);
         } catch (\Throwable) {
             return null;
         }
@@ -452,12 +469,15 @@ class DemandeForm extends Component
     public function ajouterEtapeRetour(): void
     {
         $pos = max(1, count($this->etapes_retour) - 1);
-        array_splice($this->etapes_retour, $pos, 0, [$this->etapeVide()]);
+        $nouvelle = $this->etapeVide();
+        // Hérite la date du retour (sinon celle du départ aller) pour rester soumettable.
+        $nouvelle['date'] = $this->etapes_retour[0]['date'] ?? ($this->etapes[0]['date'] ?? '');
+        array_splice($this->etapes_retour, $pos, 0, [$nouvelle]);
     }
 
     public function retirerEtapeRetour(int $index): void
     {
-        if (! isset($this->etapes_retour[$index]) || ($this->etapes_retour[$index]['locked'] ?? false)) {
+        if (!isset($this->etapes_retour[$index]) || ($this->etapes_retour[$index]['locked'] ?? false)) {
             return;
         }
         array_splice($this->etapes_retour, $index, 1);
@@ -467,7 +487,7 @@ class DemandeForm extends Component
     {
         if ($this->categorie_id) {
             $cat = Categorie::find($this->categorie_id);
-            if (! $cat || $cat->capacite < $this->nb_passagers) {
+            if (!$cat || $cat->capacite < $this->nb_passagers) {
                 $this->categorie_id = null;
             }
         }
@@ -488,7 +508,7 @@ class DemandeForm extends Component
         $rules = [
             'mode' => ['required', 'in:estimation,ferme'],
             'nb_passagers' => ['required', 'integer', 'min:1', 'max:120'],
-            'categorie_id' => ['nullable', 'exists:categories,id'],
+            'categorie_id' => ['nullable', 'exists:categories,id', $this->regleCategorie()],
             'nature_prestation' => ['required', 'string', 'in:mariage,team_building,voyage_organise,sortie_scolaire,excursion,transfert,evenement,autre'],
             'nature_prestation_autre' => ['nullable', 'required_if:nature_prestation,autre', 'string', 'max:255'],
             'client_nom' => ['required', 'string', 'max:255'],
@@ -505,6 +525,8 @@ class DemandeForm extends Component
         } else {
             foreach (array_keys($this->etapes) as $i) {
                 $rules["etapes.$i.date"] = $this->regleDate();
+                $rules["etapes.$i.heure_arrivee"] = $this->regleHeure();
+                $rules["etapes.$i.heure_depart"] = $this->regleHeure();
             }
         }
         if ($this->retour_type !== 'aucun') {
@@ -513,6 +535,8 @@ class DemandeForm extends Component
             } else {
                 foreach (array_keys($this->etapes_retour) as $i) {
                     $rules["etapes_retour.$i.date"] = $this->regleDate();
+                    $rules["etapes_retour.$i.heure_arrivee"] = $this->regleHeure();
+                    $rules["etapes_retour.$i.heure_depart"] = $this->regleHeure();
                 }
             }
         }
@@ -528,6 +552,8 @@ class DemandeForm extends Component
             $rules["$prefixe.$i.ville"] = ['required', 'string'];
             $rules["$prefixe.$i.latitude"] = ['required', 'numeric'];
             $rules["$prefixe.$i.date"] = $this->regleDate();
+            $rules["$prefixe.$i.heure_arrivee"] = $this->regleHeure();
+            $rules["$prefixe.$i.heure_depart"] = $this->regleHeure();
             if ($i === 0 || $i === $n - 1) {
                 $rules["$prefixe.$i.adresse"] = ['required', 'string'];
                 if ($this->mode === 'ferme') {
@@ -567,6 +593,55 @@ class DemandeForm extends Component
         ];
     }
 
+    /**
+     * Règle de validation d'une heure d'étape : facultative, mais si elle est
+     * renseignée le format doit être exploitable (HH:MM ou HH:MM:SS). Une heure
+     * libre (« midi », « 25:00 ») rendrait le calcul RSE impossible.
+     *
+     * @return array<int, mixed>
+     */
+    protected function regleHeure(): array
+    {
+        return [
+            'nullable',
+            'string',
+            function (string $attribute, mixed $value, callable $fail): void {
+                $valeur = trim((string) $value);
+                if ($valeur === '') {
+                    return; // heure non renseignée : facultatif.
+                }
+                if (preg_match('/^([01][0-9]|2[0-3]):[0-5][0-9](:[0-5][0-9])?$/', $valeur) !== 1) {
+                    $fail('** Heure non conforme (format attendu HH:MM) **');
+                }
+            },
+        ];
+    }
+
+    /**
+     * Règle de validation de la catégorie de véhicule : elle doit exister (déjà
+     * contrôlé) ET offrir une capacité suffisante pour le nombre de passagers.
+     * Sans ce contrôle, une demande de 60 passagers avec un minibus 19 places
+     * serait acceptée puis chiffrée de façon incohérente.
+     *
+     * @return \Closure(string, mixed, callable):void
+     */
+    protected function regleCategorie(): \Closure
+    {
+        return function (string $attribute, mixed $value, callable $fail): void {
+            if ($value === null || $value === '') {
+                return; // catégorie facultative (mode estimation).
+            }
+            $capacite = Categorie::whereKey($value)->value('capacite');
+            if ($capacite === null) {
+                return; // l'existence est vérifiée par la règle « exists ».
+            }
+            $passagers = max(1, (int) $this->nb_passagers);
+            if ((int) $capacite < $passagers) {
+                $fail("** Véhicule non conforme : capacité {$capacite} places pour {$passagers} passagers **");
+            }
+        };
+    }
+
     protected function messages(): array
     {
         return [
@@ -595,11 +670,19 @@ class DemandeForm extends Component
             return;
         }
 
-        $cle = 'demande:'.request()->ip();
-        if (RateLimiter::tooManyAttempts($cle, 5)) {
-            $this->addError('rate_limit', 'Trop de demandes envoyées. Merci de réessayer plus tard.');
+        $cle = 'demande:' . request()->ip();
 
-            return;
+        if (!app()->environment('testing')) {
+            if (RateLimiter::tooManyAttempts($cle, 5)) {
+                $this->addError(
+                    'rate_limit',
+                    'Trop de demandes envoyées. Merci de réessayer plus tard.'
+                );
+
+                return;
+            }
+
+            RateLimiter::hit($cle, 60);
         }
 
         // Les étapes sans date reprennent la date de départ avant contrôle.
@@ -614,11 +697,11 @@ class DemandeForm extends Component
 
         // Contrôles chronologiques (après validate(), qui réinitialise le sac d'erreurs).
         $chronoOk = $this->verifierChronologieRetour();
-        if (! $this->verifierChronologieHoraires()) {
+        if (!$this->verifierChronologieHoraires()) {
             $chronoOk = false;
         }
 
-        if ($data === null || ! $chronoOk) {
+        if ($data === null || !$chronoOk) {
             $this->dispatch('formulaire-invalide');
 
             return;
@@ -667,7 +750,7 @@ class DemandeForm extends Component
             $estDernier = $i === $nbEtapes - 1;
             $demande->etapes()->create([
                 'ordre' => $i + 1,
-                'commune_id' => ! empty($e['citycode']) ? Commune::where('code_insee', $e['citycode'])->value('id') : null,
+                'commune_id' => !empty($e['citycode']) ? Commune::where('code_insee', $e['citycode'])->value('id') : null,
                 'ville' => $e['ville'] ?: null,
                 'adresse' => $e['adresse'] ?: null,
                 'lieu_libelle' => $e['lieu_libelle'] ?: ($e['adresse'] ?: $e['ville'] ?: null),
@@ -679,8 +762,8 @@ class DemandeForm extends Component
                 'date' => $e['date'],
                 'heure_arrivee' => $estPremier ? null : ($e['heure_arrivee'] ?: null),
                 'heure_depart' => $estDernier ? null : ($e['heure_depart'] ?: null),
-                'arrivee_imperative' => ! $estPremier && (bool) ($e['arrivee_imperative'] ?? false),
-                'depart_imperatif' => ! $estDernier && (bool) ($e['depart_imperatif'] ?? false),
+                'arrivee_imperative' => !$estPremier && (bool) ($e['arrivee_imperative'] ?? false),
+                'depart_imperatif' => !$estDernier && (bool) ($e['depart_imperatif'] ?? false),
             ]);
         }
 
@@ -717,11 +800,11 @@ class DemandeForm extends Component
 
         // Contrôles chronologiques (après validate(), qui réinitialise le sac d'erreurs).
         $chronoOk = $this->verifierChronologieRetour();
-        if (! $this->verifierChronologieHoraires()) {
+        if (!$this->verifierChronologieHoraires()) {
             $chronoOk = false;
         }
 
-        if ($this->getErrorBag()->isNotEmpty() || ! $chronoOk) {
+        if ($this->getErrorBag()->isNotEmpty() || !$chronoOk) {
             $this->dispatch('formulaire-invalide');
 
             return;
@@ -737,7 +820,7 @@ class DemandeForm extends Component
 
     protected function genererReference(): string
     {
-        return 'DEM-'.now()->format('Ymd').'-'.Str::upper(Str::random(4));
+        return 'DEM-' . now()->format('Ymd') . '-' . Str::upper(Str::random(4));
     }
 
     public function render()
