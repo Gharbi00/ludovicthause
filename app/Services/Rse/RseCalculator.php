@@ -68,9 +68,24 @@ class RseCalculator
         $jours = [];
         for ($i = 0; $i < $nbJours; $i++) {
             $date = $dateDebut->copy()->addDays($i)->toDateString();
-            $postesJour = $postesCollection->filter(fn (Poste $p) => $p->date->format('Y-m-d') === $date);
+            $postesJour = $postesCollection->filter(fn (Poste $p) => Carbon::parse($p->date)->toDateString() === $date);
             $debut = $postesJour->where('type', 'prise_service')->first()?->heure_debut;
             $fin = $postesJour->where('type', 'fin_service')->first()?->heure_fin;
+            $reposAvantMin = null;
+            if ($i > 0 && $debut) {
+                $datePrecedente = $dateDebut->copy()->addDays($i - 1)->toDateString();
+                $postesPrecedents = $postesCollection->filter(fn (Poste $p) => Carbon::parse($p->date)->toDateString() === $datePrecedente);
+                $finPrecedente = $postesPrecedents->where('type', 'fin_service')->first()?->heure_fin;
+                if ($finPrecedente) {
+                    $heureDebut = $debut instanceof \DateTimeInterface ? $debut->format('H:i') : substr((string) $debut, 0, 5);
+                    $heureFinPrecedente = $finPrecedente instanceof \DateTimeInterface
+                        ? $finPrecedente->format('H:i')
+                        : substr((string) $finPrecedente, 0, 5);
+                    $debutRepos = Carbon::parse($datePrecedente.' '.$heureFinPrecedente);
+                    $finRepos = Carbon::parse($date.' '.$heureDebut);
+                    $reposAvantMin = (int) floor(($finRepos->timestamp - $debutRepos->timestamp) / 60);
+                }
+            }
             $amplitude = null;
             if ($debut && $fin) {
                 $debutStr = $debut instanceof \Carbon\Carbon ? $debut->format('H:i') : (string) $debut;
@@ -100,6 +115,7 @@ class RseCalculator
                 'amplitude_min' => $amplitude,
                 'heures_100_min' => $conduite,
                 'heures_50_min' => $attente,
+                'repos_precedent_min' => $reposAvantMin,
                 'relais_necessaire' => ($amplitude !== null && $amplitude > $seuilAmplitude) || $conduite > $conduiteMaxJour || ($tte > $seuilTte),
                 'statut' => $amplitude === null ? 'Horaires incomplets' : 'Contrôle effectué',
             ];

@@ -207,9 +207,89 @@ class RseCalculatorTest extends TestCase
         $component->demande = $demande->load(['devis', 'etapes']);
         $component->corrigerReglementation();
 
-        $this->assertNotNull($demande->fresh()->etapes()->first()->heure_depart);
-        $this->assertNotNull($demande->fresh()->etapes()->first()->heure_arrivee);
+        $this->assertDatabaseHas('postes', [
+            'devis_id' => $devis->id,
+            'type' => 'prise_service',
+            'heure_debut' => '08:00',
+        ]);
+        $this->assertDatabaseHas('postes', [
+            'devis_id' => $devis->id,
+            'type' => 'fin_service',
+            'heure_fin' => '15:00',
+        ]);
         $this->assertStringNotContainsString('Horaires incomplets', json_encode($devis->fresh()->calcul_payload['rse']['grille_journaliere'] ?? []));
+    }
+
+    public function test_corriger_reglementation_remplit_aussi_les_jours_sans_etape(): void
+    {
+        $dateDebut = now()->addDays(1)->toDateString();
+        $dateMilieu = now()->addDays(2)->toDateString();
+        $dateFin = now()->addDays(3)->toDateString();
+        $demande = Demande::create([
+            'reference' => 'DEM-CORR-MULTI-'.now()->format('YmdHis'),
+            'mode' => 'ferme',
+            'type_trajet' => 'simple',
+            'nb_passagers' => 1,
+            'client_nom' => 'Test',
+            'client_email' => 'test@test.com',
+            'statut' => 'en_traitement',
+        ]);
+
+        $demande->etapes()->createMany([
+            ['ordre' => 1, 'date' => $dateDebut, 'ville' => 'Paris', 'adresse' => 'Paris', 'heure_depart' => '07:30'],
+            ['ordre' => 2, 'date' => $dateFin, 'ville' => 'Lyon', 'adresse' => 'Lyon', 'heure_arrivee' => '16:45'],
+        ]);
+
+        $devis = Devis::create([
+            'demande_id' => $demande->id,
+            'reference' => 'DEV-CORR-MULTI-'.now()->format('YmdHis'),
+            'statut' => 'brouillon',
+            'cout_revient_ht' => 1200,
+            'duree_conduite_minutes' => 180,
+            'temps_attente_minutes' => 90,
+            'calcul_payload' => [
+                'rse' => [
+                    'grille_journaliere' => collect([$dateDebut, $dateMilieu, $dateFin])->map(fn ($date) => [
+                        'date' => $date,
+                        'amplitude_min' => null,
+                        'tte_min' => 60,
+                        'heures_100_min' => 60,
+                        'heures_50_min' => 0,
+                        'relais_necessaire' => false,
+                        'statut' => 'Horaires incomplets',
+                    ])->all(),
+                ],
+            ],
+        ]);
+
+        $component = new DemandeShow;
+        $component->demande = $demande->load(['devis', 'etapes']);
+        $component->corrigerReglementation();
+        $component->corrigerReglementation();
+
+        $posteIntermediaire = Poste::query()
+            ->where('devis_id', $devis->id)
+            ->whereDate('date', $dateMilieu)
+            ->where('type', 'prise_service')
+            ->first();
+        $this->assertNotNull($posteIntermediaire);
+        $this->assertSame('08:00', $posteIntermediaire->heure_debut->format('H:i'));
+        $postesCorrection = Poste::query()->where('devis_id', $devis->id)->where('origine', 'correction_reglementaire');
+        $this->assertSame(180, (int) (clone $postesCorrection)->where('type', 'conduite')->sum('duree_min'));
+        $this->assertSame(90, (int) (clone $postesCorrection)->where('type', 'attente')->sum('duree_min'));
+        $this->assertSame(3, (clone $postesCorrection)->where('type', 'conduite')->count());
+        $priseService = (clone $postesCorrection)->whereDate('date', $dateDebut)->where('type', 'prise_service')->first();
+        $finService = (clone $postesCorrection)->whereDate('date', $dateFin)->where('type', 'fin_service')->first();
+        $this->assertSame('07:30', $priseService->heure_debut->format('H:i'));
+        $this->assertSame('16:45', $finService->heure_fin->format('H:i'));
+        $this->assertSame(180, $devis->fresh()->duree_conduite_minutes);
+        $grille = $devis->fresh()->calcul_payload['rse']['grille_journaliere'];
+        $this->assertCount(3, $grille);
+        $this->assertSame([], array_values(array_filter($grille, fn ($jour) => $jour['statut'] === 'Horaires incomplets')));
+        foreach (array_slice($grille, 1) as $jour) {
+            $this->assertGreaterThanOrEqual(660, $jour['repos_precedent_min']);
+        }
+        $this->assertSame([], $component->reglementationAlertes);
     }
 
     public function test_date_annee_aberrante_declenche_erreur_protectrice(): void
@@ -302,11 +382,15 @@ class RseCalculatorTest extends TestCase
         $component->demande = $demande->load(['etapes', 'devis']);
 
         $component->changerDateEtape($etape->id);
-        $component->dateEdition[$etape->id] = '10/10/2026';
+        $component->dateEdition[$etape->id] = '2026-10-10';
         $component->appliquerDateEtape($etape->id);
 
         $this->assertSame('2026-10-10', $etape->fresh()->date->format('Y-m-d'));
         $this->assertSame([], $component->etapesDatesInvalides);
+
+        Livewire::test(DemandeShow::class, ['demande' => $demande->fresh()])
+            ->call('changerDateEtape', $etape->id)
+            ->assertSeeHtml('type="date"');
     }
 
     public function test_l_alerte_dates_non_conformes_est_affichee_dans_la_page(): void

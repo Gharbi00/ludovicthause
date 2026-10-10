@@ -150,6 +150,52 @@ class CreationDemandeScenariosTest extends TestCase
         $this->assertSame('12:30', substr((string) $demande->etapes[1]->heure_arrivee, 0, 5));
     }
 
+    public function test_estimation_accepte_une_demande_sans_ville_selectionnee(): void
+    {
+        $etapes = [
+            $this->etape('paris', ['ville' => 'Paris', 'latitude' => null, 'heure_depart' => '08:00']),
+            $this->etape('lyon', ['ville' => 'Lyon', 'latitude' => null, 'heure_arrivee' => '12:30']),
+        ];
+
+        $this->formulaire([
+            'mode' => 'estimation',
+            'categorie_id' => null,
+            'etapes' => $etapes,
+        ])->call('submit')->assertHasNoErrors();
+
+        $this->assertSame(1, $this->nbDemandes());
+        $etapes = Demande::query()->firstOrFail()->etapes()->orderBy('ordre')->get();
+        $this->assertSame('Paris', $etapes[0]->ville);
+        $this->assertNull($etapes[0]->latitude);
+    }
+
+    public function test_estimation_accepte_un_retour_different_sans_ville_selectionnee(): void
+    {
+        $formulaire = $this->formulaire([
+            'mode' => 'estimation',
+            'categorie_id' => null,
+            'retour_type' => 'different',
+        ]);
+
+        $formulaire->call('changerVilleRetour', 0)
+            ->call('submit')
+            ->assertHasNoErrors();
+
+        $etapes = Demande::query()->firstOrFail()->etapes()->orderBy('ordre')->get();
+        $this->assertNull($etapes[2]->ville);
+        $this->assertNull($etapes[2]->latitude);
+    }
+
+    public function test_nombre_de_passagers_refuse_les_decimales_avec_un_indicatif(): void
+    {
+        Livewire::test(DemandeForm::class)
+            ->set('nb_passagers', '2.5')
+            ->assertHasErrors('nb_passagers')
+            ->assertSee('Saisissez un nombre entier, sans décimale ni caractère.')
+            ->set('nb_passagers', '2')
+            ->assertHasNoErrors();
+    }
+
     /** S02 — Réservation ferme avec véhicule : catégorie et commune enregistrées. */
     public function test_s02_reservation_ferme_enregistre_la_categorie_et_la_commune(): void
     {
@@ -285,8 +331,8 @@ class CreationDemandeScenariosTest extends TestCase
         $this->assertSame(0, $this->nbDemandes());
     }
 
-    /** S12 — Estimation sans aucune ville : demande inexploitable, l'envoi doit être refusé. */
-    public function test_s12_estimation_sans_ville_doit_etre_refusee(): void
+    /** S12 — Estimation sans ville : les villes sont facultatives dans ce mode. */
+    public function test_s12_estimation_sans_ville_est_acceptee(): void
     {
         $vide = $this->etape('paris', ['ville' => '', 'ville_lat' => null, 'ville_lng' => null,
             'citycode' => null, 'latitude' => null, 'longitude' => null, 'adresse' => '',
@@ -296,10 +342,9 @@ class CreationDemandeScenariosTest extends TestCase
             'mode' => 'estimation',
             'categorie_id' => null,
             'etapes' => [$vide, $vide],
-        ])->call('submit');
+        ])->call('submit')->assertHasNoErrors();
 
-        $this->assertSame(0, $this->nbDemandes(),
-            'FAILLE : une demande sans aucun point de départ est créée (aucun chiffrage possible).');
+        $this->assertSame(1, $this->nbDemandes());
     }
 
     /** S13 — Mode fermé : ville non sélectionnée dans la liste (latitude absente) refusée. */
@@ -315,17 +360,17 @@ class CreationDemandeScenariosTest extends TestCase
         $this->assertSame(0, $this->nbDemandes());
     }
 
-    /** S14 — Adresse non validée au départ/arrivée en mode fermé : refusé. */
-    public function test_s14_adresse_non_validee_refusee_en_mode_ferme(): void
+    /** S14 — Les adresses restent facultatives même en mode fermé. */
+    public function test_s14_adresses_absentes_acceptees_en_mode_ferme(): void
     {
         $this->formulaire([
             'etapes' => [
-                $this->etape('paris', ['adresse_validee' => false, 'heure_depart' => '08:00']),
-                $this->etape('lyon', ['heure_arrivee' => '12:00']),
+                $this->etape('paris', ['adresse' => '', 'adresse_validee' => false, 'heure_depart' => '08:00']),
+                $this->etape('lyon', ['adresse' => '', 'adresse_validee' => false, 'heure_arrivee' => '12:00']),
             ],
-        ])->call('submit')->assertHasErrors('etapes.0.adresse');
+        ])->call('submit')->assertHasNoErrors();
 
-        $this->assertSame(0, $this->nbDemandes());
+        $this->assertSame(1, $this->nbDemandes());
     }
 
     // ==================================================================

@@ -33,7 +33,7 @@
                         <div class="mt-2 grid gap-2 sm:grid-cols-2">
                             <label class="flex cursor-pointer items-start gap-3 rounded-lg border border-slate-200 p-3 hover:bg-slate-50">
                                 <input type="radio" wire:model.live="mode" value="estimation" class="mt-1 text-brand focus:ring-brand">
-                                <span><strong>Estimation</strong><br><small class="text-slate-500">Sans lieu obligatoire, estimation indicative non contractuelle.</small></span>
+                                <span><strong>Estimation</strong><br><small class="text-slate-500">Villes obligatoires, adresses facultatives. Estimation indicative non contractuelle.</small></span>
                             </label>
                             <label class="flex cursor-pointer items-start gap-3 rounded-lg border border-slate-200 p-3 hover:bg-slate-50">
                                 <input type="radio" wire:model.live="mode" value="ferme" class="mt-1 text-brand focus:ring-brand">
@@ -66,16 +66,16 @@
                     </div>
                     <div class="sm:col-span-2 rounded-lg bg-amber-50 p-3 text-xs text-amber-800 ring-1 ring-amber-200">
                         @if ($mode === 'estimation')
-                            Estimation indicative, non contractuelle. Les lieux sont facultatifs et pourront être ajoutés plus tard sans ressaisie.
+                            Estimation indicative, non contractuelle. Villes et adresses facultatives.
                         @else
-                            Demande ferme : sélectionnez chaque ville et chaque adresse dans les suggestions.
+                            Demande ferme : sélectionnez chaque ville dans les suggestions ; les adresses sont facultatives.
                         @endif
                     </div>
                 </div>
                 <div class="mt-4 grid gap-5 sm:grid-cols-2">
                     <div>
                         <label class="block text-sm font-medium text-slate-700">Nombre de passagers</label>
-                        <input type="number" min="1" max="120" wire:model.live="nb_passagers"
+                        <input type="text" inputmode="decimal" pattern="[0-9]*" wire:model.live="nb_passagers"
                                class="mt-1 w-full rounded-lg border-slate-300 shadow-sm focus:border-brand focus:ring-brand">
                         @error('nb_passagers') <p data-erreur class="mt-1 text-xs text-red-600">{{ $message }}</p> @enderror
                     </div>
@@ -145,7 +145,7 @@
                             <div class="grid gap-4 sm:grid-cols-2">
                                 @include('livewire.partials.etape-adresse', [
                                     'prefixe' => 'etapes', 'i' => $i, 'etape' => $etape,
-                                    'locked' => false, 'adresseRequise' => $mode === 'ferme' && ($estPremier || $estDernier),
+                                    'locked' => false, 'villeRequise' => $mode === 'ferme',
                                     'sugVille' => $suggestionsVille, 'sugAdresse' => $suggestionsAdresse,
                                     'mVille' => 'choisirVille', 'mAdresse' => 'choisirAdresse',
                                     'mChangerVille' => 'changerVille', 'mChangerAdresse' => 'changerAdresse',
@@ -245,7 +245,7 @@
                                     @include('livewire.partials.etape-adresse', [
                                         'prefixe' => 'etapes_retour', 'i' => $i, 'etape' => $etape,
                                         'locked' => (bool) ($etape['locked'] ?? false),
-                                        'adresseRequise' => $mode === 'ferme' && ($rPremier || $rDernier),
+                                        'villeRequise' => $mode === 'ferme',
                                         'sugVille' => $suggestionsVilleRetour, 'sugAdresse' => $suggestionsAdresseRetour,
                                         'mVille' => 'choisirVilleRetour', 'mAdresse' => 'choisirAdresseRetour',
                                         'mChangerVille' => 'changerVilleRetour', 'mChangerAdresse' => 'changerAdresseRetour',

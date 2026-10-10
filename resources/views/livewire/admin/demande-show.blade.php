@@ -218,9 +218,9 @@
                                 <span class="font-medium text-slate-800">{{ $etape->libelle() }}</span>
                                 @if (data_get($editionDate, (string) $etape->id, false))
                                     <span class="inline-flex items-center gap-1">
-                                        <input type="text" inputmode="numeric" maxlength="10" placeholder="JJ/MM/AAAA"
+                                             <input type="date" min="2000-01-01" max="2100-12-31"
                                                wire:model="dateEdition.{{ $etape->id }}"
-                                               class="w-24 rounded border-slate-300 px-2 py-0.5 text-xs shadow-sm focus:border-brand focus:ring-brand">
+                                                 class="rounded border-slate-300 px-2 py-1 text-xs shadow-sm focus:border-brand focus:ring-brand">
                                         <button type="button" wire:click="appliquerDateEtape({{ $etape->id }})"
                                                 class="rounded bg-brand px-2 py-0.5 text-[10px] font-semibold text-white hover:bg-brand-dark">OK</button>
                                         <button type="button" wire:click="annulerDateEtape({{ $etape->id }})"
@@ -251,8 +251,12 @@
                                     </span>
                                 @endif
                             </div>
-                            @if ($etape->lieu_libelle || $etape->latitude)
                                 <div class="mt-2 rounded-lg bg-slate-50 p-3">
+                                    @if ($etape->latitude === null || $etape->longitude === null)
+                                        <p class="mb-2 rounded border border-amber-200 bg-amber-50 px-2 py-1.5 text-xs text-amber-800">
+                                            Destination à compléter : sélectionnez une ville pour débloquer le calcul du devis. L’adresse précise reste facultative.
+                                        </p>
+                                    @endif
                                     <div class="text-xs font-medium text-slate-600">
                                         {{ $etape->lieu_libelle ?: $etape->libelle() }}
                                         @if ($etape->geocodage_source)
@@ -290,8 +294,13 @@
                                                             class="shrink-0 ml-1 text-[10px] text-brand hover:underline">changer</button>
                                                 </div>
                                             @else
-                                                <span class="block text-xs text-slate-400">Aucune ville</span>
+                                                <div class="flex items-center justify-between gap-2">
+                                                    <span class="text-xs text-slate-400">Aucune ville</span>
+                                                    <button type="button" wire:click="changerVilleEtape({{ $etape->id }})"
+                                                            class="text-[10px] font-medium text-brand hover:underline">ajouter</button>
+                                                </div>
                                             @endif
+                                            @error("lieuVille.{$etape->id}") <p class="mt-1 text-[10px] text-red-600">{{ $message }}</p> @enderror
                                         </div>
                                          <div>
                                             <span class="block text-[10px] uppercase tracking-wide text-slate-400">Adresse (rue et n°)</span>
@@ -348,7 +357,6 @@
                                         Enregistrer les informations du lieu
                                     </button>
                                 </div>
-                            @endif
                         </li>
                     @endforeach
                 </ol>

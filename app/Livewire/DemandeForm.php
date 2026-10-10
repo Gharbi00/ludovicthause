@@ -23,7 +23,7 @@ class DemandeForm extends Component
 {
     public string $mode = 'estimation';
 
-    public ?int $nb_passagers = 30;
+    public int|string|null $nb_passagers = 30;
 
     public ?int $categorie_id = null;
 
@@ -485,6 +485,15 @@ class DemandeForm extends Component
 
     public function updatedNbPassagers(): void
     {
+        if ($this->nb_passagers !== null && $this->nb_passagers !== ''
+            && preg_match('/^[0-9]+$/', (string) $this->nb_passagers) !== 1) {
+            $this->addError('nb_passagers', 'Saisissez un nombre entier, sans décimale ni caractère.');
+
+            return;
+        }
+
+        $this->resetErrorBag('nb_passagers');
+
         if ($this->categorie_id) {
             $cat = Categorie::find($this->categorie_id);
             if (!$cat || $cat->capacite < $this->nb_passagers) {
@@ -524,6 +533,8 @@ class DemandeForm extends Component
             $this->reglesEtapes($rules, 'etapes', $this->etapes);
         } else {
             foreach (array_keys($this->etapes) as $i) {
+                $rules["etapes.$i.ville"] = ['nullable', 'string'];
+                $rules["etapes.$i.latitude"] = ['nullable', 'numeric'];
                 $rules["etapes.$i.date"] = $this->regleDate();
                 $rules["etapes.$i.heure_arrivee"] = $this->regleHeure();
                 $rules["etapes.$i.heure_depart"] = $this->regleHeure();
@@ -534,6 +545,8 @@ class DemandeForm extends Component
                 $this->reglesEtapes($rules, 'etapes_retour', $this->etapes_retour);
             } else {
                 foreach (array_keys($this->etapes_retour) as $i) {
+                    $rules["etapes_retour.$i.ville"] = ['nullable', 'string'];
+                    $rules["etapes_retour.$i.latitude"] = ['nullable', 'numeric'];
                     $rules["etapes_retour.$i.date"] = $this->regleDate();
                     $rules["etapes_retour.$i.heure_arrivee"] = $this->regleHeure();
                     $rules["etapes_retour.$i.heure_depart"] = $this->regleHeure();
@@ -544,22 +557,15 @@ class DemandeForm extends Component
         return $rules;
     }
 
-    /** Ajoute les règles par étape (adresse obligatoire seulement au départ/arrivée). */
+    /** Ajoute les règles des étapes du mode ferme; les adresses restent facultatives. */
     protected function reglesEtapes(array &$rules, string $prefixe, array $liste): void
     {
-        $n = count($liste);
         foreach (array_keys($liste) as $i) {
             $rules["$prefixe.$i.ville"] = ['required', 'string'];
             $rules["$prefixe.$i.latitude"] = ['required', 'numeric'];
             $rules["$prefixe.$i.date"] = $this->regleDate();
             $rules["$prefixe.$i.heure_arrivee"] = $this->regleHeure();
             $rules["$prefixe.$i.heure_depart"] = $this->regleHeure();
-            if ($i === 0 || $i === $n - 1) {
-                $rules["$prefixe.$i.adresse"] = ['required', 'string'];
-                if ($this->mode === 'ferme') {
-                    $rules["$prefixe.$i.adresse_validee"] = ['accepted'];
-                }
-            }
         }
     }
 
@@ -646,19 +652,18 @@ class DemandeForm extends Component
     {
         return [
             'mode.required' => 'Choisissez le mode de demande.',
+            'nb_passagers.integer' => 'Saisissez un nombre entier de passagers, sans décimale ni caractère.',
             'nature_prestation.required' => 'Indiquez la nature de la prestation.',
             'nature_prestation.in' => 'Choisissez une prestation dans la liste.',
             'nature_prestation_autre.required' => 'Précisez la nature de votre prestation.',
             'consentement_rgpd.accepted' => 'Votre consentement est nécessaire pour envoyer la demande.',
             'etapes.*.ville.required' => 'Indiquez la ville de chaque étape.',
             'etapes.*.latitude.required' => 'Sélectionnez une ville dans la liste.',
-            'etapes.*.adresse.required' => 'L’adresse précise est obligatoire au départ et à l’arrivée.',
-            'etapes.*.adresse_validee.accepted' => 'Sélectionnez une adresse dans la liste.',
+            'etapes.*.latitude.numeric' => 'Sélectionnez une ville dans la liste.',
             'etapes.*.date.required' => 'Indiquez la date de chaque étape.',
             'etapes_retour.*.ville.required' => 'Indiquez la ville de chaque étape du retour.',
             'etapes_retour.*.latitude.required' => 'Sélectionnez une ville (retour).',
-            'etapes_retour.*.adresse.required' => 'Adresse précise obligatoire au départ et à l’arrivée du retour.',
-            'etapes_retour.*.adresse_validee.accepted' => 'Sélectionnez une adresse dans la liste du retour.',
+            'etapes_retour.*.latitude.numeric' => 'Sélectionnez une ville dans la liste du retour.',
             'etapes_retour.*.date.required' => 'Indiquez la date de chaque étape du retour.',
             'client_email.email' => 'Adresse e-mail invalide.',
         ];

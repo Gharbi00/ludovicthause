@@ -1,5 +1,5 @@
 {{-- Bloc Ville + Adresse d'une étape.
-     Variables : $prefixe, $i, $etape, $locked, $adresseRequise,
+    Variables : $prefixe, $i, $etape, $locked, $villeRequise,
                  $sugVille, $sugAdresse, $mVille, $mAdresse, $mChangerVille, $mChangerAdresse --}}
 
 {{-- Ville --}}
@@ -8,7 +8,9 @@
     $adresseSuggestions = data_get($sugAdresse, (string) $i, []);
 @endphp
 <div class="sm:col-span-2">
-    <label class="block text-xs font-medium text-slate-600">Ville</label>
+    <label class="block text-xs font-medium text-slate-600">
+        Ville @if ($villeRequise)<span class="text-red-500">*</span>@else <span class="font-normal text-slate-400">(facultatif)</span>@endif
+    </label>
     @if ($locked)
         <div class="mt-1 rounded-lg border border-slate-200 bg-slate-100 px-3 py-2 text-sm text-slate-600">
             {{ $etape['ville'] ?: '—' }} <span class="text-slate-400">(imposée)</span>
@@ -45,8 +47,7 @@
     <div class="sm:col-span-2">
         <label class="block text-xs font-medium text-slate-600">
             Adresse (rue et n°)
-            @if ($adresseRequise)<span class="text-red-500">*</span>
-            @else <span class="font-normal text-slate-400">(facultatif)</span>@endif
+            <span class="font-normal text-slate-400">(facultatif)</span>
         </label>
         @if ($locked)
             <div class="mt-1 rounded-lg border border-slate-200 bg-slate-100 px-3 py-2 text-sm text-slate-600">
