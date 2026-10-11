@@ -26,3 +26,4 @@ Homestead.json
 Homestead.yaml
 Thumbs.db
 /ludo-tests
+/database/*.sqlite
