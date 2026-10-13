@@ -69,14 +69,21 @@ class HereItineraireProvider implements ItineraireProvider
         $dureeSecondes = 0;
         $peage = 0.0;
         $vignettes = 0.0;
+        $segmentsCalcul = [];
 
         foreach (data_get($route, 'sections', []) as $i => $section) {
             $lenM = (int) data_get($section, 'summary.length', 0);
             $dur = (int) data_get($section, 'summary.duration', 0);
+            $chargeSegment = $i >= $indexPriseEnCharge && $i < $indexDepose;
             $distanceTotaleM += $lenM;
             $dureeSecondes += $dur;
+            $segmentsCalcul[] = [
+                'distance_km' => round($lenM / 1000, 2),
+                'duree_minutes' => (int) round($dur / 60),
+                'charge' => $chargeSegment,
+            ];
 
-            if ($i >= $indexPriseEnCharge && $i < $indexDepose) {
+            if ($chargeSegment) {
                 $distanceChargeM += $lenM;
             } else {
                 $distanceVideM += $lenM;
@@ -109,6 +116,7 @@ class HereItineraireProvider implements ItineraireProvider
                 'sections' => count(data_get($route, 'sections', [])),
                 'geometry' => data_get($route, 'sections.0.polyline'),
                 'tollways' => [],
+                'segments' => $segmentsCalcul,
             ],
         );
     }

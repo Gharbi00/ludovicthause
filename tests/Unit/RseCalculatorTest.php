@@ -4,11 +4,14 @@ namespace Tests\Unit;
 
 use App\Livewire\Admin\DemandeShow;
 use App\Livewire\DemandeForm;
+use App\Models\Categorie;
 use App\Models\Demande;
 use App\Models\Devis;
+use App\Models\Etape;
 use App\Models\Lieu;
 use App\Models\Parametre;
 use App\Models\Poste;
+use App\Models\Vehicule;
 use App\Services\Geocodage;
 use App\Services\Itineraire\ItineraireProvider;
 use App\Services\MoteurCalcul;
@@ -38,19 +41,258 @@ class RseCalculatorTest extends TestCase
     public function test_un_seul_jour_court_ne_declenche_pas_de_second_chauffeur(): void
     {
         $calc = new RseCalculator;
-        $config = $calc->calculer(300, now()->startOfDay(), now()->endOfDay(), []);
+        $config = $calc->calculer(300, Carbon::now()->startOfDay(), Carbon::now()->endOfDay(), []);
 
         $this->assertSame(1, $config->nbChauffeurs);
         $this->assertSame(0, $config->nbNuitees);
         $this->assertSame(1, $config->nbJours);
     }
 
-    public function test_conduite_excessif_declenche_deux_chauffeurs(): void
+    public function test_dix_heures_de_conduite_autorisees_ne_declenchent_pas_de_relais(): void
     {
         $calc = new RseCalculator;
-        $config = $calc->calculer(600, now()->startOfDay(), now()->endOfDay(), []);
+        $config = $calc->calculer(600, Carbon::now()->startOfDay(), Carbon::now()->endOfDay(), []);
 
-        $this->assertSame(2, $config->nbChauffeurs);
+        $this->assertSame(1, $config->nbChauffeurs);
+
+        $depassement = $calc->calculer(601, Carbon::now()->startOfDay(), Carbon::now()->endOfDay(), []);
+        $this->assertSame(2, $depassement->nbChauffeurs);
+    }
+
+    public function test_pause_reglementaire_fractionnee_15_plus_30_est_acceptee(): void
+    {
+        $date = now()->addDay()->toDateString();
+        $poste = fn (string $type, string $debut, string $fin, int $duree) => Poste::make([
+            'date' => $date,
+            'type' => $type,
+            'heure_debut' => $debut,
+            'heure_fin' => $fin,
+            'duree_min' => $duree,
+        ]);
+        $calc = new RseCalculator;
+
+        $sansPause = $calc->calculer(300, Carbon::parse($date), Carbon::parse($date), [
+            $poste('conduite', '08:00', '13:00', 300),
+        ]);
+        $this->assertTrue($sansPause->details['grille_journaliere'][0]['pause_reglementaire_manquante']);
+
+        $avecPauseFractionnee = $calc->calculer(540, Carbon::parse($date), Carbon::parse($date), [
+            $poste('conduite', '08:00', '12:30', 270),
+            $poste('pause', '12:30', '12:45', 15),
+            $poste('conduite', '12:45', '17:15', 270),
+            $poste('pause', '17:15', '17:45', 30),
+        ]);
+        $this->assertFalse($avecPauseFractionnee->details['grille_journaliere'][0]['pause_reglementaire_manquante']);
+    }
+
+    public function test_tte_maximum_journalier_est_borne_a_onze_heures(): void
+    {
+        $date = Carbon::parse('2026-10-12');
+        $posteAttente = fn (int $minutes) => Poste::make([
+            'date' => $date,
+            'type' => 'attente',
+            'heure_debut' => '08:00',
+            'heure_fin' => '08:00',
+            'duree_min' => $minutes,
+        ]);
+        $calc = new RseCalculator;
+
+        $limite = $calc->calculer(0, $date, $date, [$posteAttente(1320)]);
+        $depassement = $calc->calculer(0, $date, $date, [$posteAttente(1322)]);
+
+        $this->assertSame(660, $limite->details['grille_journaliere'][0]['tte_min']);
+        $this->assertFalse($limite->details['grille_journaliere'][0]['relais_necessaire']);
+        $this->assertSame(661, $depassement->details['grille_journaliere'][0]['tte_min']);
+        $this->assertTrue($depassement->details['grille_journaliere'][0]['relais_necessaire']);
+    }
+
+    public function test_limites_56_heures_par_semaine_et_90_heures_sur_deux_semaines(): void
+    {
+        $dateDebut = Carbon::parse('2026-10-05')->startOfDay();
+        $dateFin = $dateDebut->copy()->addDays(13);
+        $postes = collect(range(0, 13))->map(function (int $index) use ($dateDebut) {
+            $date = $dateDebut->copy()->addDays($index);
+
+            return Poste::make([
+                'date' => $date,
+                'type' => 'conduite',
+                'heure_debut' => '08:00',
+                'heure_fin' => '14:30',
+                'duree_min' => 390,
+            ]);
+        });
+
+        $config = (new RseCalculator)->calculer(5460, $dateDebut, $dateFin, $postes);
+        $grille = $config->details['grille_journaliere'];
+
+        $this->assertSame(14, count($grille));
+        $this->assertFalse($grille[0]['depassement_semaine']);
+        $this->assertTrue($grille[7]['depassement_deux_semaines']);
+    }
+
+    public function test_modification_poste_recalcule_les_heures_et_la_duree(): void
+    {
+        $date = now()->addDay()->toDateString();
+        $demande = Demande::create([
+            'reference' => 'DEM-POSTE-EDIT-'.now()->format('YmdHis'),
+            'mode' => 'ferme',
+            'type_trajet' => 'simple',
+            'nb_passagers' => 1,
+            'client_nom' => 'Test',
+            'client_email' => 'test@test.com',
+            'statut' => 'en_traitement',
+        ]);
+        $demande->etapes()->createMany([
+            ['ordre' => 1, 'date' => $date, 'ville' => 'Paris'],
+            ['ordre' => 2, 'date' => $date, 'ville' => 'Lyon'],
+        ]);
+        $devis = Devis::create([
+            'demande_id' => $demande->id,
+            'reference' => 'DEV-POSTE-EDIT-'.now()->format('YmdHis'),
+            'statut' => 'brouillon',
+            'duree_conduite_minutes' => 300,
+            'temps_attente_minutes' => 0,
+            'calcul_payload' => ['rse' => ['grille_journaliere' => []]],
+        ]);
+        $poste = Poste::create([
+            'devis_id' => $devis->id,
+            'date' => $date,
+            'ordre' => 1,
+            'type' => 'conduite',
+            'heure_debut' => '08:00',
+            'heure_fin' => '13:00',
+            'duree_min' => 300,
+            'taux' => 100,
+            'origine' => 'saisie_manuelle',
+        ]);
+
+        $component = new DemandeShow;
+        $component->demande = $demande->load(['devis', 'etapes']);
+        $component->modifierPoste($poste->id);
+        $component->poste_heure_debut = '09:15';
+        $component->poste_heure_fin = '13:45';
+        $component->enregistrerModificationPoste();
+
+        $posteModifie = $poste->fresh();
+        $this->assertSame('09:15', $posteModifie->heure_debut->format('H:i'));
+        $this->assertSame('13:45', $posteModifie->heure_fin->format('H:i'));
+        $this->assertSame(270, $posteModifie->duree_min);
+    }
+
+    public function test_appliquer_surcharge_recalcule_les_couts_et_le_rse(): void
+    {
+        $date = now()->addDay()->toDateString();
+        $categorie = Categorie::create([
+            'libelle' => 'Autocar test',
+            'capacite' => 50,
+            'gabarit' => 'standard',
+            'actif' => true,
+        ]);
+        $vehicule = Vehicule::create([
+            'immatriculation' => 'TEST-OVERRIDE',
+            'categorie_id' => $categorie->id,
+            'nb_places' => 50,
+            'conso_l_100km' => 20,
+            'cout_entretien_km' => 0.1,
+        ]);
+        $demande = Demande::create([
+            'reference' => 'DEM-OVERRIDE-'.now()->format('YmdHis'),
+            'mode' => 'ferme',
+            'type_trajet' => 'simple',
+            'nb_passagers' => 1,
+            'client_nom' => 'Test',
+            'client_email' => 'test@test.com',
+            'statut' => 'en_traitement',
+        ]);
+        $demande->etapes()->createMany([
+            ['ordre' => 1, 'date' => $date, 'ville' => 'Paris'],
+            ['ordre' => 2, 'date' => $date, 'ville' => 'Lyon'],
+        ]);
+        $devis = Devis::create([
+            'demande_id' => $demande->id,
+            'vehicule_id' => $vehicule->id,
+            'reference' => 'DEV-OVERRIDE-'.now()->format('YmdHis'),
+            'statut' => 'brouillon',
+            'distance_km' => 100,
+            'distance_km_charge' => 80,
+            'distance_km_vide' => 20,
+            'duree_conduite_minutes' => 300,
+            'temps_attente_minutes' => 0,
+            'cout_carburant' => 34,
+            'cout_charges_variables' => 10,
+            'cout_revient_ht' => 44,
+            'calcul_payload' => ['rse' => ['grille_journaliere' => []]],
+        ]);
+
+        $component = new DemandeShow;
+        $component->demande = $demande->load(['devis', 'etapes']);
+        $component->edit_distance_km = 50;
+        $component->appliquerOverride();
+
+        $devisActualise = $devis->fresh();
+        $this->assertSame(100.0, (float) $devisActualise->original_distance_km);
+        $this->assertSame(50.0, (float) $devisActualise->distance_km);
+        $this->assertSame(17.0, (float) $devisActualise->cout_carburant);
+        $this->assertNotEmpty($devisActualise->calcul_payload['rse']['grille_journaliere']);
+        $this->assertStringContainsString('recalculés', $component->flash);
+    }
+
+    public function test_prise_et_fin_de_service_sont_refusees_hors_des_extremites_du_trajet(): void
+    {
+        $dateDebut = now()->addDay()->toDateString();
+        $dateIntermediaire = now()->addDays(2)->toDateString();
+        $dateFin = now()->addDays(3)->toDateString();
+        $demande = Demande::create([
+            'reference' => 'DEM-POSTE-EXT-'.now()->format('YmdHis'),
+            'mode' => 'ferme',
+            'type_trajet' => 'simple',
+            'nb_passagers' => 1,
+            'client_nom' => 'Test',
+            'client_email' => 'test@test.com',
+            'statut' => 'en_traitement',
+        ]);
+        $demande->etapes()->createMany([
+            ['ordre' => 1, 'date' => $dateDebut, 'ville' => 'Paris'],
+            ['ordre' => 2, 'date' => $dateIntermediaire, 'ville' => 'Nevers'],
+            ['ordre' => 3, 'date' => $dateFin, 'ville' => 'Lyon'],
+        ]);
+        $devis = Devis::create([
+            'demande_id' => $demande->id,
+            'reference' => 'DEV-POSTE-EXT-'.now()->format('YmdHis'),
+            'statut' => 'brouillon',
+            'duree_conduite_minutes' => 240,
+            'temps_attente_minutes' => 0,
+            'calcul_payload' => ['rse' => ['grille_journaliere' => []]],
+        ]);
+
+        $component = new DemandeShow;
+        $component->demande = $demande->load(['devis', 'etapes']);
+        $component->ouvrirAjoutPoste($dateIntermediaire);
+        $component->poste_type = 'prise_service';
+        $component->poste_heure_debut = '08:00';
+        $component->poste_heure_fin = '08:00';
+        $component->ajouterPoste();
+
+        $this->assertStringContainsString('uniquement le premier jour', $component->erreur);
+        $this->assertDatabaseMissing('postes', [
+            'devis_id' => $devis->id,
+            'date' => $dateIntermediaire,
+            'type' => 'prise_service',
+        ]);
+
+        $component->fermerAjoutPoste();
+        $component->ouvrirAjoutPoste($dateIntermediaire);
+        $component->poste_type = 'fin_service';
+        $component->poste_heure_debut = '17:00';
+        $component->poste_heure_fin = '17:00';
+        $component->ajouterPoste();
+
+        $this->assertStringContainsString('uniquement le dernier jour', $component->erreur);
+        $this->assertDatabaseMissing('postes', [
+            'devis_id' => $devis->id,
+            'date' => $dateIntermediaire,
+            'type' => 'fin_service',
+        ]);
     }
 
     public function test_amplitude_max_declenche_relais(): void
@@ -97,7 +339,7 @@ class RseCalculatorTest extends TestCase
             'date_modif' => now(),
         ]);
         $postes = Poste::where('devis_id', $devis->id)->get();
-        $config = $calc->calculer(300, now()->startOfDay(), now()->endOfDay(), $postes);
+        $config = $calc->calculer(300, Carbon::now()->startOfDay(), Carbon::now()->endOfDay(), $postes);
 
         $this->assertSame(2, $config->nbChauffeurs);
         $this->assertTrue($config->details['relais_necessaire']);
@@ -106,7 +348,7 @@ class RseCalculatorTest extends TestCase
     public function test_grille_journaliere_contient_les_totaux(): void
     {
         $calc = new RseCalculator;
-        $config = $calc->calculer(600, now()->startOfDay(), now()->addDay()->endOfDay(), []);
+        $config = $calc->calculer(600, Carbon::now()->startOfDay(), Carbon::now()->addDay()->endOfDay(), []);
 
         $grille = $config->details['grille_journaliere'];
         $this->assertCount(2, $grille);
@@ -115,7 +357,7 @@ class RseCalculatorTest extends TestCase
         $this->assertSame(600, $total100);
     }
 
-    public function test_reglementation_invalide_declenche_alerte_et_bloc_le_devis(): void
+    public function test_reglementation_invalide_affiche_une_alerte_sans_bloquer_le_devis(): void
     {
         $demande = Demande::create([
             'reference' => 'DEM-RSE-'.now()->format('YmdHis'),
@@ -156,7 +398,9 @@ class RseCalculatorTest extends TestCase
 
         $component->changerStatutDevis('valide', 'devis_edite');
 
-        $this->assertStringContainsString('réglementation sociale', strtolower($component->erreur));
+        $this->assertNull($component->erreur);
+        $this->assertSame('valide', $devis->fresh()->statut);
+        $this->assertSame('devis_edite', $demande->fresh()->statut);
     }
 
     public function test_corriger_reglementation_remplit_les_horaires_incomplets_avec_un_minimum_valide(): void
@@ -215,7 +459,7 @@ class RseCalculatorTest extends TestCase
         $this->assertDatabaseHas('postes', [
             'devis_id' => $devis->id,
             'type' => 'fin_service',
-            'heure_fin' => '15:00',
+            'heure_fin' => '15:45',
         ]);
         $this->assertStringNotContainsString('Horaires incomplets', json_encode($devis->fresh()->calcul_payload['rse']['grille_journaliere'] ?? []));
     }
@@ -270,10 +514,19 @@ class RseCalculatorTest extends TestCase
         $posteIntermediaire = Poste::query()
             ->where('devis_id', $devis->id)
             ->whereDate('date', $dateMilieu)
-            ->where('type', 'prise_service')
+            ->where('type', 'conduite')
             ->first();
         $this->assertNotNull($posteIntermediaire);
-        $this->assertSame('08:00', $posteIntermediaire->heure_debut->format('H:i'));
+        $this->assertDatabaseMissing('postes', [
+            'devis_id' => $devis->id,
+            'date' => $dateMilieu,
+            'type' => 'prise_service',
+        ]);
+        $this->assertDatabaseMissing('postes', [
+            'devis_id' => $devis->id,
+            'date' => $dateMilieu,
+            'type' => 'fin_service',
+        ]);
         $postesCorrection = Poste::query()->where('devis_id', $devis->id)->where('origine', 'correction_reglementaire');
         $this->assertSame(180, (int) (clone $postesCorrection)->where('type', 'conduite')->sum('duree_min'));
         $this->assertSame(90, (int) (clone $postesCorrection)->where('type', 'attente')->sum('duree_min'));
@@ -292,6 +545,227 @@ class RseCalculatorTest extends TestCase
         $this->assertSame([], $component->reglementationAlertes);
     }
 
+    public function test_correction_planifie_un_repos_hebdomadaire_apres_six_jours(): void
+    {
+        $dateDebut = Carbon::parse('2026-10-05')->startOfDay();
+        $dates = collect(range(0, 7))->map(fn (int $jour) => $dateDebut->copy()->addDays($jour)->toDateString());
+        $demande = Demande::create([
+            'reference' => 'DEM-REPOS-HEBDO-'.now()->format('YmdHis'),
+            'mode' => 'ferme',
+            'type_trajet' => 'simple',
+            'nb_passagers' => 1,
+            'client_nom' => 'Test',
+            'client_email' => 'test@test.com',
+            'statut' => 'en_traitement',
+        ]);
+        foreach ($dates as $index => $date) {
+            if ($index !== 6) {
+                $demande->etapes()->create([
+                    'ordre' => $index + 1,
+                    'date' => $date,
+                    'ville' => 'Ville '.$index,
+                ]);
+            }
+        }
+
+        $devis = Devis::create([
+            'demande_id' => $demande->id,
+            'reference' => 'DEV-REPOS-HEBDO-'.now()->format('YmdHis'),
+            'statut' => 'brouillon',
+            'cout_revient_ht' => 1200,
+            'duree_conduite_minutes' => 420,
+            'temps_attente_minutes' => 0,
+            'calcul_payload' => [
+                'rse' => [
+                    'grille_journaliere' => $dates->map(fn (string $date) => [
+                        'date' => $date,
+                        'amplitude_min' => null,
+                        'tte_min' => 60,
+                        'heures_100_min' => 60,
+                        'heures_50_min' => 0,
+                        'relais_necessaire' => false,
+                        'statut' => 'Horaires incomplets',
+                    ])->all(),
+                ],
+            ],
+        ]);
+
+        $component = new DemandeShow;
+        $component->demande = $demande->load(['devis', 'etapes']);
+        $component->corrigerReglementation();
+
+        $grille = $devis->fresh()->calcul_payload['rse']['grille_journaliere'];
+        $this->assertSame('Repos', $grille[6]['statut']);
+        $this->assertGreaterThanOrEqual(2700, $grille[7]['repos_hebdomadaire_precedent_min']);
+        $this->assertSame(1, Poste::where('devis_id', $devis->id)->where('type', 'prise_service')->count());
+        $this->assertSame(1, Poste::where('devis_id', $devis->id)->where('type', 'fin_service')->count());
+        $this->assertSame([], $component->reglementationAlertes);
+    }
+
+    public function test_fixation_complete_les_arrivees_a_80_km_h_sans_ecraser_les_horaires_saisis(): void
+    {
+        $date = '2026-10-20';
+        $demande = Demande::create([
+            'reference' => 'DEM-ARRIVEE-80-'.now()->format('YmdHis'),
+            'mode' => 'ferme',
+            'type_trajet' => 'simple',
+            'nb_passagers' => 1,
+            'client_nom' => 'Test',
+            'client_email' => 'test@test.com',
+            'statut' => 'en_traitement',
+        ]);
+        $demande->etapes()->createMany([
+            ['ordre' => 1, 'date' => $date, 'ville' => 'Varennes-Vauzelles', 'latitude' => 47.004, 'longitude' => 3.140],
+            ['ordre' => 2, 'date' => $date, 'ville' => 'Paris', 'latitude' => 48.8566, 'longitude' => 2.3522, 'heure_arrivee' => '12:00'],
+            ['ordre' => 3, 'date' => $date, 'ville' => 'Paris', 'latitude' => 48.8566, 'longitude' => 2.3522, 'heure_depart' => '19:00'],
+            ['ordre' => 4, 'date' => $date, 'ville' => 'Varennes-Vauzelles', 'latitude' => 47.004, 'longitude' => 3.140],
+        ]);
+        $devis = Devis::create([
+            'demande_id' => $demande->id,
+            'reference' => 'DEV-ARRIVEE-80-'.now()->format('YmdHis'),
+            'statut' => 'brouillon',
+            'cout_revient_ht' => 1200,
+            'duree_conduite_minutes' => 400,
+            'temps_attente_minutes' => 0,
+            'calcul_payload' => [
+                'rse' => [
+                    'grille_journaliere' => [[
+                        'date' => $date,
+                        'amplitude_min' => null,
+                        'tte_min' => 400,
+                        'heures_100_min' => 400,
+                        'heures_50_min' => 0,
+                        'relais_necessaire' => false,
+                        'statut' => 'Horaires incomplets',
+                    ]],
+                ],
+            ],
+        ]);
+
+        $component = new DemandeShow;
+        $component->demande = $demande->load(['devis', 'etapes.commune']);
+        $component->corrigerReglementation();
+
+        $etapes = $demande->fresh()->etapes()->orderBy('ordre')->get();
+        $this->assertNotNull($etapes[0]->heure_depart);
+        $this->assertLessThan('12:00', $etapes[0]->heure_depart);
+        $this->assertSame('12:00', substr((string) $etapes[1]->heure_arrivee, 0, 5));
+        $this->assertSame('19:00', substr((string) $etapes[2]->heure_depart, 0, 5));
+        $this->assertNotNull($etapes[3]->heure_arrivee);
+        $this->assertGreaterThan('19:00', substr((string) $etapes[3]->heure_arrivee, 0, 5));
+        $this->assertSame(substr((string) $etapes[1]->heure_arrivee, 0, 5), substr((string) $etapes[1]->heure_depart, 0, 5));
+        $this->assertDatabaseHas('postes', ['devis_id' => $devis->id, 'type' => 'pause', 'duree_min' => 45]);
+    }
+
+    public function test_fixer_replanifie_une_conduite_manuelle_superieure_a_dix_heures(): void
+    {
+        $date = '2026-09-08';
+        $demande = Demande::create([
+            'reference' => 'DEM-FIX-918-'.now()->format('YmdHis'),
+            'mode' => 'estimation',
+            'type_trajet' => 'simple',
+            'nb_passagers' => 30,
+            'client_nom' => 'Test',
+            'client_email' => 'test@test.com',
+            'statut' => 'devis_edite',
+        ]);
+        $etapes = $demande->etapes()->createMany([
+            ['ordre' => 1, 'date' => $date, 'heure_depart' => '08:00', 'ville' => 'Paris', 'latitude' => 48.8566, 'longitude' => 2.3522],
+            ['ordre' => 2, 'date' => $date, 'heure_arrivee' => '14:53', 'ville' => 'Lyon', 'latitude' => 45.7580, 'longitude' => 4.8351],
+        ]);
+        $devis = Devis::create([
+            'demande_id' => $demande->id,
+            'reference' => 'DEV-FIX-918-'.now()->format('YmdHis'),
+            'statut' => 'brouillon',
+            'cout_revient_ht' => 1200,
+            'duree_conduite_minutes' => 923,
+            'temps_attente_minutes' => 0,
+            'calcul_payload' => [
+                'itineraire' => [
+                    'duree_conduite_chargee_minutes' => 923,
+                    'duree_par_troncon_etape' => [$etapes[0]->id.':'.$etapes[1]->id => 923],
+                ],
+                'rse' => ['grille_journaliere' => [[
+                    'date' => $date,
+                    'amplitude_min' => 413,
+                    'tte_min' => 918,
+                    'heures_100_min' => 918,
+                    'heures_50_min' => 0,
+                    'relais_necessaire' => true,
+                    'statut' => 'Contrôle effectué',
+                ]]],
+            ],
+        ]);
+        $ancienPoste = Poste::create([
+            'devis_id' => $devis->id,
+            'date' => $date,
+            'ordre' => 1,
+            'type' => 'conduite',
+            'heure_debut' => '00:00',
+            'heure_fin' => '15:18',
+            'duree_min' => 918,
+            'taux' => 100,
+            'origine' => 'saisie_manuelle',
+        ]);
+
+        $component = new DemandeShow;
+        $component->demande = $demande->load(['devis', 'etapes.commune']);
+        $component->corrigerReglementation();
+
+        $postes = Poste::query()->where('devis_id', $devis->id)->get();
+        $conduiteParJour = $postes->where('type', 'conduite')->groupBy(fn (Poste $poste) => Carbon::parse($poste->date)->toDateString());
+        $this->assertDatabaseMissing('postes', ['id' => $ancienPoste->id]);
+        $this->assertSame(923, (int) $postes->where('type', 'conduite')->sum('duree_min'));
+        $this->assertCount(1, $conduiteParJour);
+        $this->assertSame(923, (int) $conduiteParJour->get($date)->sum('duree_min'));
+        $this->assertSame(2, (int) $devis->fresh()->nb_chauffeurs);
+        $this->assertLessThanOrEqual(270, (int) $conduiteParJour->get($date)->max('duree_min'));
+        $this->assertSame('23:23', $demande->fresh()->etapes()->reorder()->orderByDesc('ordre')->first()->heure_arrivee);
+
+        $grille = $devis->fresh()->calcul_payload['rse']['grille_journaliere'];
+        $this->assertCount(1, $grille);
+        $this->assertSame([], $component->reglementationAlertes);
+    }
+
+    public function test_secretariat_peut_saisir_arrivee_et_depart_sur_une_etape_sans_horaires(): void
+    {
+        $date = now()->addDay()->toDateString();
+        $demande = Demande::create([
+            'reference' => 'DEM-EDIT-HEURES-'.now()->format('YmdHis'),
+            'mode' => 'ferme',
+            'type_trajet' => 'simple',
+            'nb_passagers' => 1,
+            'client_nom' => 'Test',
+            'client_email' => 'test@test.com',
+            'statut' => 'en_traitement',
+        ]);
+        $demande->etapes()->createMany([
+            ['ordre' => 1, 'date' => $date, 'ville' => 'Paris'],
+            ['ordre' => 2, 'date' => $date, 'ville' => 'Lyon'],
+        ]);
+        $devis = Devis::create([
+            'demande_id' => $demande->id,
+            'reference' => 'DEV-EDIT-HEURES-'.now()->format('YmdHis'),
+            'statut' => 'brouillon',
+            'duree_conduite_minutes' => 240,
+            'temps_attente_minutes' => 0,
+            'calcul_payload' => ['rse' => ['grille_journaliere' => []]],
+        ]);
+
+        $etape = $demande->etapes()->where('ordre', 2)->firstOrFail();
+        $component = new DemandeShow;
+        $component->demande = $demande->load(['devis', 'etapes']);
+        $component->modifierHorairesEtape($etape->id);
+        $component->horairesEdition[$etape->id] = ['heure_arrivee' => '10:00', 'heure_depart' => '10:30'];
+        $component->enregistrerHorairesEtape($etape->id);
+
+        $etapeActualisee = Etape::findOrFail($etape->id);
+        $this->assertSame('10:00', substr((string) $etapeActualisee->heure_arrivee, 0, 5));
+        $this->assertSame('10:30', substr((string) $etapeActualisee->heure_depart, 0, 5));
+        $this->assertSame([], $component->getErrorBag()->all());
+        $this->assertNotEmpty($devis->fresh()->calcul_payload['rse']['grille_journaliere']);
+    }
+
     public function test_date_annee_aberrante_declenche_erreur_protectrice(): void
     {
         $calc = new RseCalculator;
@@ -306,7 +780,7 @@ class RseCalculatorTest extends TestCase
         $calc = new RseCalculator;
 
         $this->expectException(\RuntimeException::class);
-        $calc->calculer(300, now()->startOfDay(), now()->addYears(2)->startOfDay(), []);
+        $calc->calculer(300, Carbon::now()->startOfDay(), Carbon::now()->addYears(2)->startOfDay(), []);
     }
 
     public function test_moteur_calcul_refuse_une_fenetre_de_dates_aberrante(): void

@@ -39,7 +39,7 @@ class ParametreSeeder extends Seeder
             ['cle' => 'rse_duree_pause_min',              'valeur' => '45',  'type' => 'integer', 'groupe' => 'rse', 'libelle' => 'Durée pause (min) — fractionnable 15+30'],
             ['cle' => 'rse_repos_journalier_min',         'valeur' => '660', 'type' => 'integer', 'groupe' => 'rse', 'libelle' => 'Repos journalier (min) — 11h'],
             ['cle' => 'rse_amplitude_max_min',            'valeur' => '780', 'type' => 'integer', 'groupe' => 'rse', 'libelle' => 'Amplitude max (min) — 13h'],
-            ['cle' => 'rse_tte_max_min',                  'valeur' => '900', 'type' => 'integer', 'groupe' => 'rse', 'libelle' => 'TTE max journalier (min) — 15h'],
+            ['cle' => 'rse_tte_max_min',                  'valeur' => '660', 'type' => 'integer', 'groupe' => 'rse', 'libelle' => 'Temps de travail effectif journalier max (min) — 11h'],
             ['cle' => 'rse_taux_temps_disposition',       'valeur' => '50',  'type' => 'integer', 'groupe' => 'rse', 'libelle' => 'Taux temps à disposition (%) — 50% par défaut'],
 
             // --- Clés API (à renseigner en réglages) ---

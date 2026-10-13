@@ -49,7 +49,7 @@ class MoteurCalcul
         // On géolocalise à l'adresse précise de l'étape (BAN) ; repli sur la commune si besoin.
         $brut = [];
         $ptDepot = $this->pointCoord((float) $depot->latitude, (float) $depot->longitude, $depot->nom);
-        $brut[] = ['pt' => $ptDepot, 'etape' => false, 'id' => $this->idCoord($ptDepot)];
+        $brut[] = ['pt' => $ptDepot, 'etape' => false, 'etape_ids' => [], 'id' => $this->idCoord($ptDepot)];
 
         foreach ($etapes as $etape) {
             $lat = $etape->latitude ?? $etape->commune?->latitude;
@@ -58,10 +58,10 @@ class MoteurCalcul
                 throw new RuntimeException("Coordonnées manquantes pour l'étape « {$etape->libelle()} ».");
             }
             $pt = $this->pointCoord((float) $lat, (float) $lng, $etape->libelle());
-            $brut[] = ['pt' => $pt, 'etape' => true, 'id' => $this->idCoord($pt)];
+            $brut[] = ['pt' => $pt, 'etape' => true, 'etape_ids' => [$etape->id], 'id' => $this->idCoord($pt)];
         }
 
-        $brut[] = ['pt' => $ptDepot, 'etape' => false, 'id' => $this->idCoord($ptDepot)];
+        $brut[] = ['pt' => $ptDepot, 'etape' => false, 'etape_ids' => [], 'id' => $this->idCoord($ptDepot)];
 
         // Dédoublonner les points identiques consécutifs (point de retournement en double,
         // départ = dépôt…) : sinon le comptage des segments est décalé (km chargés/à vide faux).
@@ -70,6 +70,7 @@ class MoteurCalcul
             $n = count($fusion);
             if ($n > 0 && $fusion[$n - 1]['id'] === $p['id']) {
                 $fusion[$n - 1]['etape'] = $fusion[$n - 1]['etape'] || $p['etape'];
+                $fusion[$n - 1]['etape_ids'] = [...$fusion[$n - 1]['etape_ids'], ...$p['etape_ids']];
 
                 continue;
             }
@@ -89,6 +90,33 @@ class MoteurCalcul
         }
 
         $itineraire = $this->itineraireProvider->calculer($points, (int) $indexPriseEnCharge, $indexDepose, $vehicule);
+        $indicesEtapes = [];
+        foreach ($fusion as $index => $point) {
+            foreach ($point['etape_ids'] as $etapeId) {
+                $indicesEtapes[$etapeId] = $index;
+            }
+        }
+        $dureesTroncons = collect(data_get($itineraire->payload, 'segments', []))
+            ->map(fn (array $segment) => (int) ($segment['duree_minutes'] ?? 0))
+            ->all();
+        $dureeConduiteChargee = $dureesTroncons !== []
+            ? array_sum(array_slice($dureesTroncons, (int) $indexPriseEnCharge, max(0, $indexDepose - (int) $indexPriseEnCharge)))
+            : (int) round($itineraire->dureeConduiteMinutes * $itineraire->distanceKmCharge / max(0.01, $itineraire->distanceKm));
+        $dureeParTronconEtape = [];
+        $etapesOrdonnees = $etapes->sortBy('ordre')->values();
+        for ($index = 1; $index < $etapesOrdonnees->count(); $index++) {
+            $etapeDepart = $etapesOrdonnees[$index - 1];
+            $etapeArrivee = $etapesOrdonnees[$index];
+            $indexDepart = $indicesEtapes[$etapeDepart->id] ?? null;
+            $indexArrivee = $indicesEtapes[$etapeArrivee->id] ?? null;
+            if ($indexDepart === null || $indexArrivee === null || $indexArrivee < $indexDepart) {
+                continue;
+            }
+
+            $dureeParTronconEtape[$etapeDepart->id.':'.$etapeArrivee->id] = array_sum(
+                array_slice($dureesTroncons, $indexDepart, $indexArrivee - $indexDepart)
+            );
+        }
 
         // Cache de l'itinéraire par couple origine-destination/profil (REQ-T-06).
         if ($itineraire->source !== 'estimation') {
@@ -177,7 +205,10 @@ class MoteurCalcul
             'original_temps_attente_minutes' => $attenteMinutes,
             'calcul_payload' => [
                 'source_itineraire' => $itineraire->source,
-                'itineraire' => $itineraire->payload,
+                'itineraire' => array_merge($itineraire->payload, [
+                    'duree_conduite_chargee_minutes' => $dureeConduiteChargee,
+                    'duree_par_troncon_etape' => $dureeParTronconEtape,
+                ]),
                 'rse' => $config->details,
                 'parametres' => compact('prixGasoil', 'tauxChauffeur', 'coefSaison', 'tauxTva', 'fraisNuitee'),
                 'calcule_le' => $dateDebut->toDateString(),
@@ -267,6 +298,62 @@ class MoteurCalcul
 
         $payload = $devis->calcul_payload ?? [];
         $payload['rse'] = $config->details;
-        $devis->update(['calcul_payload' => $payload]);
+        $devis->update([
+            'calcul_payload' => $payload,
+            'nb_chauffeurs' => $config->nbChauffeurs,
+            'nb_nuitees' => $config->nbNuitees,
+        ]);
+    }
+
+    /** Recalcule les coûts dérivés après application d'une surcharge distance/durée. */
+    public function recalculerCoutsPourDevis(Devis $devis): void
+    {
+        $devis->loadMissing('vehicule');
+        $vehicule = $devis->vehicule;
+        if (! $vehicule) {
+            return;
+        }
+
+        $prixGasoil = (float) Parametre::get('prix_gasoil_litre', 1.70);
+        $tauxChauffeur = (float) Parametre::get('taux_horaire_chauffeur', 0);
+        $coefSaison = (float) Parametre::get('coef_saisonnalite', 1.0);
+        $fraisNuitee = (float) Parametre::get('frais_nuitee_chauffeur', 90);
+        $jours = max(1, count($devis->calcul_payload['rse']['grille_journaliere'] ?? []));
+        $distance = (float) $devis->distance_km;
+
+        $couts = [
+            'cout_carburant' => ($vehicule->conso_l_100km / 100) * $distance * $prixGasoil,
+            'cout_chauffeur' => $tauxChauffeur
+                * (((int) $devis->duree_conduite_minutes + (int) $devis->temps_attente_minutes) / 60)
+                * max(1, (int) $devis->nb_chauffeurs)
+                + $fraisNuitee * (int) $devis->nb_nuitees * max(1, (int) $devis->nb_chauffeurs),
+            'cout_charges_fixes' => (
+                ($vehicule->loyer_credit_bail_mensuel * 12)
+                + $vehicule->assurance_annuelle
+                + $vehicule->quote_part_loyers_annuelle
+                + $vehicule->autres_charges_fixes_annuelles
+            ) / max(1, (int) $vehicule->jours_exploitation_an) * $jours * $coefSaison,
+            'cout_charges_variables' => (
+                $vehicule->cout_entretien_km
+                + $vehicule->cout_pneus_km
+                + $vehicule->cout_adblue_km
+                + $vehicule->autres_variables_km
+            ) * $distance,
+        ];
+
+        $updates = [];
+        foreach ($couts as $champ => $valeur) {
+            if ($devis->{'original_'.$champ} === null) {
+                $updates[$champ] = round($valeur, 2);
+            }
+        }
+
+        $coutRevient = 0;
+        foreach (['cout_carburant', 'cout_peage', 'cout_vignettes', 'cout_chauffeur', 'cout_charges_fixes', 'cout_charges_variables'] as $champ) {
+            $coutRevient += (float) ($updates[$champ] ?? $devis->$champ);
+        }
+        $updates['cout_revient_ht'] = round($coutRevient, 2);
+        $devis->update($updates);
+        $devis->recalculerTotaux();
     }
 }

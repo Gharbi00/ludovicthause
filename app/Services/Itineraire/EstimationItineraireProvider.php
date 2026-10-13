@@ -37,7 +37,13 @@ class EstimationItineraireProvider implements ItineraireProvider
                 $distanceVide += $km;
             }
             $distanceTotale += $km;
-            $segments[] = ['de' => $a['nom'], 'vers' => $b['nom'], 'km' => $km, 'charge' => $chargeSegment];
+            $segments[] = [
+                'de' => $a['nom'],
+                'vers' => $b['nom'],
+                'km' => $km,
+                'duree_minutes' => (int) round(($km / self::VITESSE_MOY_KMH) * 60),
+                'charge' => $chargeSegment,
+            ];
         }
 
         $dureeMinutes = (int) round(($distanceTotale / self::VITESSE_MOY_KMH) * 60);

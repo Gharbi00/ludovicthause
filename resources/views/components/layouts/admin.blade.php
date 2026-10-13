@@ -15,6 +15,7 @@
     <style>
         [x-cloak] { display: none !important; }
     </style>
+    @vite('resources/js/app.js')
     @livewireStyles
 </head>
 <body class="h-full bg-slate-100 text-slate-800 antialiased">

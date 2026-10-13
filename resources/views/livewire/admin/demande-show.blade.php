@@ -4,6 +4,8 @@
     target.scrollIntoView({ behavior: 'smooth', block: 'center' });
     target.classList.remove('scroll-attention');
     requestAnimationFrame(() => target.classList.add('scroll-attention'));
+    const control = target.querySelector('[data-correction-control]');
+    if (control) setTimeout(() => control.focus({ preventScroll: true }), 350);
     setTimeout(() => target.classList.remove('scroll-attention'), 1400);
 ">
     <style>
@@ -110,6 +112,7 @@
     @if ($devis?->cout_revient_ht > 0 && ! $this->reglementationEstValide())
         <div class="mb-4 flex justify-end">
             <button type="button" wire:click="corrigerReglementation"
+                    title="Les heures d’arrivée manquantes sont estimées avec une vitesse moyenne de bus de 80 km/h."
                     class="rounded-lg bg-amber-600 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-700">
                 Fixer au minimum réglementaire
             </button>
@@ -122,25 +125,42 @@
     @endphp
 
     @if (! $reglementationValide)
-        <div id="reglementation-alertes" class="reglementation-alert mb-4 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">
+        <div id="reglementation-alertes" class="reglementation-alert mb-4 rounded-2xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950">
             <div class="flex items-center justify-between gap-3">
-                <span class="font-semibold">⚠ Règlementation non conforme</span>
-                <span class="rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-red-700">Bloqué</span>
+                <span class="font-semibold">Attention : points réglementaires à vérifier</span>
+                <span class="rounded-full bg-orange-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-orange-800">Information critique</span>
             </div>
-            <p class="mt-2">Aucune demande ne peut être confirmée tant que la réglementation sociale n’est pas valide.</p>
-            <ul class="mt-3 list-disc space-y-1 pl-5">
+            <p class="mt-2">Le devis peut continuer son traitement. Vérifiez ces points avant le départ du véhicule.</p>
+            <ul class="mt-3 list-disc space-y-1 pl-5 marker:text-orange-700">
                 @foreach ($reglementationAlertes as $alerte)
                     @php
                         $alerteCible = 'chiffrage';
                         if (preg_match('/Journée du (\d{2}\/\d{2}\/\d{4})/', $alerte, $dateAlerte)) {
                             $alerteCible = 'rse-jour-'.\Illuminate\Support\Carbon::createFromFormat('d/m/Y', $dateAlerte[1])->format('Y-m-d');
+                        } elseif (preg_match('/Semaine (\d{4}-\d{2})/', $alerte, $semaineAlerte)) {
+                            foreach (($devis->calcul_payload['rse']['grille_journaliere'] ?? []) as $jourAlerte) {
+                                if (\Illuminate\Support\Carbon::parse($jourAlerte['date'])->format('o-W') === $semaineAlerte[1]) {
+                                    $alerteCible = 'rse-jour-'.\Illuminate\Support\Carbon::parse($jourAlerte['date'])->format('Y-m-d');
+                                    break;
+                                }
+                            }
+                        } elseif (preg_match('/autour du (\d{2}\/\d{2}\/\d{4})/', $alerte, $periodeAlerte)) {
+                            $alerteCible = 'rse-jour-'.\Illuminate\Support\Carbon::createFromFormat('d/m/Y', $periodeAlerte[1])->format('Y-m-d');
                         } elseif (str_contains(\Illuminate\Support\Str::lower($alerte), 'affectez un véhicule')) {
                             $alerteCible = 'affectation-vehicule';
                         }
+                        $alerteTexte = \Illuminate\Support\Str::lower($alerte);
+                        $libelleCorrection = $alerteCible === 'affectation-vehicule'
+                            ? 'Choisir le véhicule'
+                            : (str_contains($alerteTexte, 'semaine') || str_contains($alerteTexte, 'deux semaines')
+                                ? 'Ouvrir cette période dans le tableau RSE'
+                                : (str_starts_with($alerteCible, 'rse-jour-')
+                                    ? 'Ouvrir les postes de cette journée'
+                                    : 'Aller au calcul du devis'));
                     @endphp
                     <li class="flex flex-wrap items-baseline justify-between gap-x-3">
                         <span>{{ $alerte }}</span>
-                        <a href="#{{ $alerteCible }}" x-on:click.prevent="$dispatch('scroll-to-section', { target: '{{ $alerteCible }}' })" class="shrink-0 font-medium underline underline-offset-2 hover:text-red-950">Voir où corriger</a>
+                        <a href="#{{ $alerteCible }}" aria-label="{{ $libelleCorrection }}" x-on:click.prevent="$dispatch('scroll-to-section', { target: '{{ $alerteCible }}' })" class="shrink-0 font-semibold text-amber-900 underline underline-offset-2 hover:text-orange-950">{{ $libelleCorrection }} →</a>
                     </li>
                 @endforeach
             </ul>
@@ -171,7 +191,7 @@
                     @elseif($rse['statutConduite']==='orange') bg-orange-100 text-orange-700
                     @elseif($rse['statutConduite']==='rouge') bg-red-100 text-red-700
                     @else bg-slate-100 text-slate-500 @endif">
-                    Conduite {{ $rse['conduite'] ? intdiv($rse['conduite'],60).'h'.str_pad($rse['conduite']%60,2,'0',STR_PAD_LEFT) : '—' }}
+                    Conduite{{ $devis->nb_chauffeurs > 1 ? ' / chauffeur' : '' }} {{ $rse['conduite'] ? intdiv($rse['conduite'],60).'h'.str_pad($rse['conduite']%60,2,'0',STR_PAD_LEFT) : '—' }}
                 </span>
                 <span class="text-slate-500">100 % {{ $rse['heures100'] ? intdiv($rse['heures100'],60).'h'.str_pad($rse['heures100']%60,2,'0',STR_PAD_LEFT) : '—' }}</span>
                 <span class="text-slate-500">50 % {{ $rse['heures50'] ? intdiv($rse['heures50'],60).'h'.str_pad($rse['heures50']%60,2,'0',STR_PAD_LEFT) : '—' }}</span>
@@ -239,16 +259,32 @@
                                     @endif
                                 @endif
                             </div>
-                            <div class="mt-1 flex flex-wrap gap-2 text-xs text-slate-500">
-                                @if ($etape->heure_arrivee)
-                                    <span>Arrivée {{ \Illuminate\Support\Str::of($etape->heure_arrivee)->substr(0,5) }}
-                                        @if ($etape->arrivee_imperative)<span class="text-red-600 font-medium">(impératif)</span>@endif
-                                    </span>
-                                @endif
-                                @if ($etape->heure_depart)
-                                    <span>· Départ {{ \Illuminate\Support\Str::of($etape->heure_depart)->substr(0,5) }}
-                                        @if ($etape->depart_imperatif)<span class="text-red-600 font-medium">(impératif)</span>@endif
-                                    </span>
+                            <div class="mt-2 rounded-md bg-slate-50 px-3 py-2">
+                                @if (data_get($editionHoraires, (string) $etape->id, false))
+                                    <div class="grid gap-2 sm:grid-cols-2">
+                                        <div>
+                                            <label for="heure-arrivee-{{ $etape->id }}" class="block text-[10px] font-medium uppercase tracking-wide text-slate-500">Heure d’arrivée</label>
+                                            <input id="heure-arrivee-{{ $etape->id }}" type="time" wire:model="horairesEdition.{{ $etape->id }}.heure_arrivee" class="mt-1 w-full rounded border-slate-300 text-sm shadow-sm">
+                                            @error("horairesEdition.{$etape->id}.heure_arrivee") <p class="mt-1 text-[10px] text-red-600">{{ $message }}</p> @enderror
+                                        </div>
+                                        <div>
+                                            <label for="heure-depart-{{ $etape->id }}" class="block text-[10px] font-medium uppercase tracking-wide text-slate-500">Heure de départ</label>
+                                            <input id="heure-depart-{{ $etape->id }}" type="time" wire:model="horairesEdition.{{ $etape->id }}.heure_depart" class="mt-1 w-full rounded border-slate-300 text-sm shadow-sm">
+                                            @error("horairesEdition.{$etape->id}.heure_depart") <p class="mt-1 text-[10px] text-red-600">{{ $message }}</p> @enderror
+                                        </div>
+                                    </div>
+                                    <div class="mt-2 flex gap-2">
+                                        <button type="button" wire:click="enregistrerHorairesEtape({{ $etape->id }})" class="rounded bg-brand px-3 py-1 text-xs font-semibold text-white hover:bg-brand-dark">Enregistrer</button>
+                                        <button type="button" wire:click="annulerHorairesEtape({{ $etape->id }})" class="rounded border border-slate-300 bg-white px-3 py-1 text-xs text-slate-600 hover:bg-slate-50">Annuler</button>
+                                    </div>
+                                @else
+                                    <div class="flex flex-wrap items-center justify-between gap-2">
+                                        <div class="flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-600">
+                                            <span>Arrivée <strong>{{ $etape->heure_arrivee ? \Illuminate\Support\Str::of($etape->heure_arrivee)->substr(0,5) : '—' }}</strong>@if ($etape->arrivee_imperative) <span class="font-medium text-red-600">(impératif)</span>@endif</span>
+                                            <span>Départ <strong>{{ $etape->heure_depart ? \Illuminate\Support\Str::of($etape->heure_depart)->substr(0,5) : '—' }}</strong>@if ($etape->depart_imperatif) <span class="font-medium text-red-600">(impératif)</span>@endif</span>
+                                        </div>
+                                        <button type="button" wire:click="modifierHorairesEtape({{ $etape->id }})" class="shrink-0 text-xs font-medium text-brand hover:underline">Modifier les horaires</button>
+                                    </div>
                                 @endif
                             </div>
                                 <div class="mt-2 rounded-lg bg-slate-50 p-3">
@@ -499,7 +535,10 @@
                                                 $total100 += $jour['heures_100_min'];
                                                 $total50 += $jour['heures_50_min'];
                                                 $totalTte += $jour['tte_min'];
-                                                $postesJour = $postesParJour->get(Carbon\Carbon::parse($jour['date'])->format('Y-m-d'), collect());
+                                                $dateJour = Carbon\Carbon::parse($jour['date'])->format('Y-m-d');
+                                                $estPremierJour = $loop->first;
+                                                $estDernierJour = $loop->last;
+                                                $postesJour = $postesParJour->get($dateJour, collect());
                                             @endphp
                                             <tr id="rse-jour-{{ Carbon\Carbon::parse($jour['date'])->format('Y-m-d') }}" class="border-t border-slate-100">
                                                 <td class="px-2 py-2">{{ Carbon\Carbon::parse($jour['date'])->format('d/m/Y') }}</td>
@@ -507,7 +546,7 @@
                                                 <td class="px-2 py-2">{{ $formatMin($jour['heures_50_min']) }}</td>
                                                 <td class="px-2 py-2">{{ $formatMin($jour['tte_min']) }}</td>
                                                 <td class="px-2 py-2">{{ $formatMin($jour['amplitude_min']) }}</td>
-                                                <td class="px-2 py-2 @if($jour['relais_necessaire']) text-red-600 font-semibold @else text-slate-500 @endif">
+                                                <td class="px-2 py-2 @if($jour['relais_necessaire']) text-orange-700 font-semibold @else text-slate-500 @endif">
                                                     @if ($jour['relais_necessaire']) Relais nécessaire
                                                     @else {{ $jour['statut'] }} @endif
                                                 </td>
@@ -515,27 +554,49 @@
                                                     @if($postesJour->isNotEmpty())
                                                         <div class="space-y-1.5">
                                                             @foreach($postesJour as $p)
-                                                                <div class="grid grid-cols-[minmax(6rem,1fr)_auto_auto_auto_auto_auto] items-center gap-2 rounded border border-slate-200 bg-white px-2 py-1.5">
-                                                                    <span class="font-medium text-slate-700">{{ ['prise_service' => 'Prise de service', 'conduite' => 'Conduite', 'attente' => 'Attente', 'fin_service' => 'Fin de service'][$p->type] ?? ucfirst(str_replace('_', ' ', $p->type)) }}</span>
-                                                                    <span class="tabular-nums text-slate-600">{{ $p->heure_debut ? $p->heure_debut->format('H:i') : '—' }}</span>
-                                                                    <span class="text-slate-400">→</span>
-                                                                    <span class="tabular-nums text-slate-600">{{ $p->heure_fin ? $p->heure_fin->format('H:i') : '—' }}</span>
-                                                                    <span class="whitespace-nowrap rounded bg-slate-100 px-1.5 py-0.5 text-slate-600">{{ $p->duree_min !== null ? $formatMin((int) $p->duree_min) : '—' }}</span>
-                                                                    <button type="button" wire:click="supprimerPoste({{ $p->id }})" title="Supprimer ce poste" aria-label="Supprimer le poste {{ $p->type }}" class="justify-self-end text-red-500 hover:text-red-700">×</button>
-                                                                </div>
+                                                                @if ($editingPosteId === $p->id)
+                                                                    <div class="space-y-2 rounded border border-brand/30 bg-white p-2">
+                                                                        <div class="flex flex-wrap items-center gap-2">
+                                                                            <strong class="text-slate-700">{{ ['prise_service' => 'Prise de service', 'conduite' => 'Conduite', 'attente' => 'Attente', 'pause' => 'Pause réglementaire', 'fin_service' => 'Fin de service'][$p->type] ?? ucfirst(str_replace('_', ' ', $p->type)) }}</strong>
+                                                                            <input aria-label="Début du poste" type="time" wire:model="poste_heure_debut" class="rounded border-slate-300 text-xs">
+                                                                            <span class="text-slate-400">→</span>
+                                                                            <input aria-label="Fin du poste" type="time" wire:model="poste_heure_fin" class="rounded border-slate-300 text-xs">
+                                                                            <select aria-label="Taux du poste" wire:model="poste_taux" class="rounded border-slate-300 text-xs">
+                                                                                <option value="0">Repos</option>
+                                                                                <option value="50">50 %</option>
+                                                                                <option value="100">100 %</option>
+                                                                            </select>
+                                                                        </div>
+                                                                        <div class="flex gap-2">
+                                                                            <button type="button" wire:click="enregistrerModificationPoste" class="rounded bg-brand px-2 py-1 text-xs font-semibold text-white">Enregistrer</button>
+                                                                            <button type="button" wire:click="fermerAjoutPoste" class="rounded border border-slate-300 px-2 py-1 text-xs text-slate-600">Annuler</button>
+                                                                        </div>
+                                                                    </div>
+                                                                @else
+                                                                    <div class="grid grid-cols-[minmax(6rem,1fr)_auto_auto_auto_auto_auto_auto] items-center gap-2 rounded border border-slate-200 bg-white px-2 py-1.5">
+                                                                        <span class="font-medium text-slate-700">{{ ['prise_service' => 'Prise de service', 'conduite' => 'Conduite', 'attente' => 'Attente', 'pause' => 'Pause réglementaire', 'fin_service' => 'Fin de service'][$p->type] ?? ucfirst(str_replace('_', ' ', $p->type)) }}</span>
+                                                                        <span class="tabular-nums text-slate-600">{{ $p->heure_debut ? $p->heure_debut->format('H:i') : '—' }}</span>
+                                                                        <span class="text-slate-400">→</span>
+                                                                        <span class="tabular-nums text-slate-600">{{ $p->heure_fin ? $p->heure_fin->format('H:i') : '—' }}</span>
+                                                                        <span class="whitespace-nowrap rounded bg-slate-100 px-1.5 py-0.5 text-slate-600">{{ $p->duree_min !== null ? $formatMin((int) $p->duree_min) : '—' }}</span>
+                                                                        <button type="button" wire:click="modifierPoste({{ $p->id }})" data-correction-control title="Modifier les heures" aria-label="Modifier le poste {{ $p->type }}" class="text-brand hover:text-brand-dark">Modifier</button>
+                                                                        <button type="button" wire:click="supprimerPoste({{ $p->id }})" title="Supprimer ce poste" aria-label="Supprimer le poste {{ $p->type }}" class="text-red-500 hover:text-red-700">×</button>
+                                                                    </div>
+                                                                @endif
                                                             @endforeach
                                                         </div>
                                                     @else
                                                         <span class="text-slate-400">—</span>
                                                     @endif
-                                                    <button type="button" wire:click="ouvrirAjoutPoste('{{ $jour['date'] }}')" class="mt-2 inline-flex items-center rounded border border-slate-300 px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50">+ Ajouter un poste</button>
+                                                    <button type="button" wire:click="ouvrirAjoutPoste('{{ $jour['date'] }}')" data-correction-control class="mt-2 inline-flex items-center rounded border border-slate-300 px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50">+ Ajouter un poste</button>
                                                     @if($editingPosteDate === $jour['date'])
                                                         <div class="mt-1 p-2 bg-slate-50 rounded border">
                                                             <select wire:model="poste_type" class="text-xs border rounded mb-1">
-                                                                <option value="prise_service">Prise</option>
+                                                                @if ($estPremierJour)<option value="prise_service">Prise de service</option>@endif
                                                                 <option value="conduite">Conduite</option>
-                                                                <option value="attente">Attente</option>
-                                                                <option value="fin_service">Fin</option>
+                                                                <option value="attente">Attente (50 %)</option>
+                                                                <option value="pause">Pause réglementaire</option>
+                                                                @if ($estDernierJour)<option value="fin_service">Fin de service</option>@endif
                                                             </select>
                                                             <input type="time" wire:model="poste_heure_debut" class="text-xs border rounded mb-1 w-full">
                                                             <input type="time" wire:model="poste_heure_fin" class="text-xs border rounded mb-1 w-full">
@@ -560,7 +621,7 @@
                                     </tbody>
                                 </table>
                             </div>
-                            <p class="mt-1 text-[11px] text-slate-400">100 % = conduite, 50 % = attente. Amplitude contrôlée à 13 h ; horaires incomplets à compléter.</p>
+                            <p class="mt-1 text-[11px] text-slate-400">L’amplitude est recalculée à partir des horaires édités. La prise de service apparaît le premier jour, la fin de service le dernier; les pauses réglementaires ne sont pas du temps de conduite.</p>
                         @endif
                     </div>
 
@@ -568,42 +629,49 @@
 
                         {{-- Surcharges manuelles km / durées (REQ-S-06, REQ-S-10) --}}
                         @php $d = $devis; @endphp
-                        <div id="surcharges-manuelles" class="mt-4 rounded-lg border border-slate-200 p-3">
-                            <p class="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">Surcharges manuelles (km / durées)</p>
-                            <div class="grid gap-2 sm:grid-cols-3 text-xs">
+                        <div id="surcharges-manuelles" class="mt-4 rounded-lg border border-brand/20 bg-green-50/60 p-4">
+                            <div class="mb-3">
+                                <h3 class="text-sm font-semibold text-slate-800">Surcharges manuelles</h3>
+                                <p class="mt-1 text-xs text-slate-600">Remplacez uniquement les valeurs à corriger. Les champs laissés vides conservent les valeurs calculées.</p>
+                            </div>
+                            <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 text-xs">
                                 <div>
-                                    <label class="block text-slate-600">Distance (km)</label>
-                                    <input type="number" step="0.1" wire:model="edit_distance_km" value="{{ $d->distance_km }}" class="mt-1 w-full rounded border-slate-300 text-sm">
-                                    @if($d->original_distance_km !== null)<span class="text-slate-400">origine : {{ number_format($d->original_distance_km,2,',',' ') }}</span>@endif
+                                    <label for="edit-distance-km" class="block font-medium text-slate-700">Distance totale</label>
+                                    <div class="mt-1 flex rounded-md shadow-sm"><input id="edit-distance-km" type="number" min="0" step="0.1" inputmode="decimal" wire:model="edit_distance_km" placeholder="{{ number_format((float) $d->distance_km, 1, '.', '') }}" class="min-w-0 flex-1 rounded-l-md border-slate-300 bg-white text-sm shadow-sm focus:border-brand focus:ring-brand"><span class="inline-flex items-center rounded-r-md border border-l-0 border-slate-300 bg-slate-100 px-3 text-slate-600">km</span></div>
+                                    <p class="mt-1 text-[11px] text-slate-500">Calculée : {{ number_format((float) $d->distance_km, 1, ',', ' ') }} km</p>
                                 </div>
                                 <div>
-                                    <label class="block text-slate-600">Dont chargés (km)</label>
-                                    <input type="number" step="0.1" wire:model="edit_distance_km_charge" value="{{ $d->distance_km_charge }}" class="mt-1 w-full rounded border-slate-300 text-sm">
-                                    @if($d->original_distance_km_charge !== null)<span class="text-slate-400">origine : {{ number_format($d->original_distance_km_charge,2,',',' ') }}</span>@endif
+                                    <label for="edit-distance-km-charge" class="block font-medium text-slate-700">Distance avec passagers</label>
+                                    <div class="mt-1 flex rounded-md shadow-sm"><input id="edit-distance-km-charge" type="number" min="0" step="0.1" inputmode="decimal" wire:model="edit_distance_km_charge" placeholder="{{ number_format((float) $d->distance_km_charge, 1, '.', '') }}" class="min-w-0 flex-1 rounded-l-md border-slate-300 bg-white text-sm shadow-sm focus:border-brand focus:ring-brand"><span class="inline-flex items-center rounded-r-md border border-l-0 border-slate-300 bg-slate-100 px-3 text-slate-600">km</span></div>
+                                    <p class="mt-1 text-[11px] text-slate-500">Calculée : {{ number_format((float) $d->distance_km_charge, 1, ',', ' ') }} km</p>
                                 </div>
                                 <div>
-                                    <label class="block text-slate-600">Dont à vide (km)</label>
-                                    <input type="number" step="0.1" wire:model="edit_distance_km_vide" value="{{ $d->distance_km_vide }}" class="mt-1 w-full rounded border-slate-300 text-sm">
-                                    @if($d->original_distance_km_vide !== null)<span class="text-slate-400">origine : {{ number_format($d->original_distance_km_vide,2,',',' ') }}</span>@endif
+                                    <label for="edit-distance-km-vide" class="block font-medium text-slate-700">Distance à vide</label>
+                                    <div class="mt-1 flex rounded-md shadow-sm"><input id="edit-distance-km-vide" type="number" min="0" step="0.1" inputmode="decimal" wire:model="edit_distance_km_vide" placeholder="{{ number_format((float) $d->distance_km_vide, 1, '.', '') }}" class="min-w-0 flex-1 rounded-l-md border-slate-300 bg-white text-sm shadow-sm focus:border-brand focus:ring-brand"><span class="inline-flex items-center rounded-r-md border border-l-0 border-slate-300 bg-slate-100 px-3 text-slate-600">km</span></div>
+                                    <p class="mt-1 text-[11px] text-slate-500">Calculée : {{ number_format((float) $d->distance_km_vide, 1, ',', ' ') }} km</p>
                                 </div>
                                 <div>
-                                    <label class="block text-slate-600">Conduite (min)</label>
-                                    <input type="number" wire:model="edit_duree_conduite_minutes" value="{{ $d->duree_conduite_minutes }}" class="mt-1 w-full rounded border-slate-300 text-sm">
-                                    @if($d->original_duree_conduite_minutes !== null)<span class="text-slate-400">origine : {{ $d->original_duree_conduite_minutes }}</span>@endif
+                                    <label for="edit-duree-conduite" class="block font-medium text-slate-700">Durée de conduite</label>
+                                    <div class="mt-1 flex rounded-md shadow-sm"><input id="edit-duree-conduite" type="number" min="0" step="1" inputmode="numeric" wire:model="edit_duree_conduite_minutes" placeholder="{{ (int) $d->duree_conduite_minutes }}" class="min-w-0 flex-1 rounded-l-md border-slate-300 bg-white text-sm shadow-sm focus:border-brand focus:ring-brand"><span class="inline-flex items-center rounded-r-md border border-l-0 border-slate-300 bg-slate-100 px-3 text-slate-600">min</span></div>
+                                    <p class="mt-1 text-[11px] text-slate-500">Calculée : {{ intdiv((int) $d->duree_conduite_minutes, 60) }} h {{ str_pad((int) $d->duree_conduite_minutes % 60, 2, '0', STR_PAD_LEFT) }}</p>
                                 </div>
                                 <div>
-                                    <label class="block text-slate-600">Attente (min)</label>
-                                    <input type="number" wire:model="edit_temps_attente_minutes" value="{{ $d->temps_attente_minutes }}" class="mt-1 w-full rounded border-slate-300 text-sm">
-                                    @if($d->original_temps_attente_minutes !== null)<span class="text-slate-400">origine : {{ $d->original_temps_attente_minutes }}</span>@endif
+                                    <label for="edit-temps-attente" class="block font-medium text-slate-700">Durée d’attente</label>
+                                    <div class="mt-1 flex rounded-md shadow-sm"><input id="edit-temps-attente" type="number" min="0" step="1" inputmode="numeric" wire:model="edit_temps_attente_minutes" placeholder="{{ (int) $d->temps_attente_minutes }}" class="min-w-0 flex-1 rounded-l-md border-slate-300 bg-white text-sm shadow-sm focus:border-brand focus:ring-brand"><span class="inline-flex items-center rounded-r-md border border-l-0 border-slate-300 bg-slate-100 px-3 text-slate-600">min</span></div>
+                                    <p class="mt-1 text-[11px] text-slate-500">Calculée : {{ intdiv((int) $d->temps_attente_minutes, 60) }} h {{ str_pad((int) $d->temps_attente_minutes % 60, 2, '0', STR_PAD_LEFT) }}</p>
                                 </div>
                                 <div>
-                                    <label class="block text-slate-600">Raison (traçabilité)</label>
-                                    <input type="text" wire:model="override_raison" placeholder="Ex. ajustement client" class="mt-1 w-full rounded border-slate-300 text-sm">
+                                    <label for="override-raison" class="block font-medium text-slate-700">Motif de la correction</label>
+                                    <input id="override-raison" type="text" wire:model="override_raison" placeholder="Ex. durée confirmée par le transporteur" class="mt-1 w-full rounded-md border-slate-300 bg-white text-sm shadow-sm focus:border-brand focus:ring-brand">
                                 </div>
                             </div>
-                            <div class="mt-2 flex gap-2">
-                                <button wire:click="appliquerOverride" class="rounded-lg bg-brand px-3 py-1.5 text-xs font-semibold text-white hover:bg-brand-dark">Appliquer</button>
-                                <button wire:click="reinitialiserOverride" class="rounded-lg border border-slate-300 px-3 py-1.5 text-xs text-slate-600 hover:bg-slate-50">Réinitialiser</button>
+                            <div class="mt-4 flex flex-wrap items-center gap-2">
+                                <button type="button" wire:click="appliquerOverride" wire:loading.attr="disabled" wire:target="appliquerOverride"
+                                        class="rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white hover:bg-brand-dark disabled:opacity-50">
+                                    <span wire:loading.remove wire:target="appliquerOverride">Appliquer et recalculer</span>
+                                    <span wire:loading wire:target="appliquerOverride">Recalcul en cours…</span>
+                                </button>
+                                <button type="button" wire:click="reinitialiserOverride" class="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 hover:bg-slate-50">Réinitialiser</button>
                             </div>
                             @if($d->override_author)
                                 <p class="mt-1 text-[10px] text-orange-700">Override par {{ $d->override_author }} le {{ \Carbon\Carbon::parse($d->override_at)->format('d/m/Y H:i') }}</p>

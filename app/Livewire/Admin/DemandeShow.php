@@ -16,6 +16,7 @@ use App\Services\Geocodage;
 use App\Services\MoteurCalcul;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Livewire\Attributes\Layout;
 use Livewire\Component;
@@ -47,6 +48,12 @@ class DemandeShow extends Component
     public array $editionDate = [];
 
     public array $dateEdition = [];
+
+    /** @var array<int, bool> */
+    public array $editionHoraires = [];
+
+    /** @var array<int, array{heure_arrivee: ?string, heure_depart: ?string}> */
+    public array $horairesEdition = [];
 
     // Suggestions ville / adresse lors de la modification d'un lieu (Itinéraire).
     public array $suggestionsVille = [];
@@ -114,6 +121,8 @@ class DemandeShow extends Component
     // Édition en ligne des postes dans le tableau RSE.
     public ?string $editingPosteDate = null;
 
+    public ?int $editingPosteId = null;
+
     public string $poste_type = 'conduite';
 
     public ?string $poste_heure_debut = null;
@@ -147,6 +156,101 @@ class DemandeShow extends Component
             $this->lieuGeocodageSource[$etape->id] = $etape->geocodage_source;
             $this->lieuGeocodageProviderId[$etape->id] = $etape->geocodage_provider_id;
         }
+    }
+    
+    public function modifierHorairesEtape(int $etapeId): void
+    {
+        $etape = $this->demande->etapes->firstWhere('id', $etapeId);
+        if (! $etape) {
+            return;
+        }
+        
+        $this->editionHoraires[$etapeId] = true;
+        $this->horairesEdition[$etapeId] = [
+            'heure_arrivee' => $etape->heure_arrivee ? substr((string) $etape->heure_arrivee, 0, 5) : null,
+            'heure_depart' => $etape->heure_depart ? substr((string) $etape->heure_depart, 0, 5) : null,
+        ];
+        $this->resetErrorBag("horairesEdition.$etapeId");
+    }
+    
+    public function annulerHorairesEtape(int $etapeId): void
+    {
+        unset($this->editionHoraires[$etapeId], $this->horairesEdition[$etapeId]);
+        $this->resetErrorBag("horairesEdition.$etapeId");
+    }
+    
+    public function enregistrerHorairesEtape(int $etapeId): void
+    {
+        $etape = $this->demande->etapes->firstWhere('id', $etapeId);
+        if (! $etape) {
+            return;
+        }
+        
+        $this->validate([
+            "horairesEdition.$etapeId.heure_arrivee" => ['nullable', 'date_format:H:i'],
+            "horairesEdition.$etapeId.heure_depart" => ['nullable', 'date_format:H:i'],
+        ], [
+            'horairesEdition.*.date_format' => 'Saisissez une heure au format HH:MM.',
+        ]);
+        
+        $arrivee = $this->horairesEdition[$etapeId]['heure_arrivee'] ?? null;
+        $depart = $this->horairesEdition[$etapeId]['heure_depart'] ?? null;
+        if ($arrivee && $depart) {
+            $minutesArrivee = (int) Carbon::createFromFormat('H:i', $arrivee)->format('H') * 60
+                + (int) Carbon::createFromFormat('H:i', $arrivee)->format('i');
+            $minutesDepart = (int) Carbon::createFromFormat('H:i', $depart)->format('H') * 60
+                + (int) Carbon::createFromFormat('H:i', $depart)->format('i');
+            if ($minutesDepart < $minutesArrivee) {
+                $this->addError("horairesEdition.$etapeId.heure_depart", 'Le départ ne peut pas précéder l’arrivée sur cette étape.');
+                return;
+            }
+        }
+        
+        $etape->update([
+            'heure_arrivee' => $arrivee ?: null,
+            'heure_depart' => $depart ?: null,
+        ]);
+        $this->annulerHorairesEtape($etapeId);
+        
+        $devis = $this->devisActuel();
+        if ($devis) {
+            $posteService = $etape->ordre === $this->demande->etapes->min('ordre')
+                ? Poste::query()->where('devis_id', $devis->id)->where('type', 'prise_service')->first()
+                : null;
+            $posteFin = $etape->ordre === $this->demande->etapes->max('ordre')
+                ? Poste::query()->where('devis_id', $devis->id)->where('type', 'fin_service')->first()
+                : null;
+            if ($posteService && $depart) {
+                $posteService->update(['heure_debut' => $depart, 'heure_fin' => $depart]);
+            }
+            if ($posteFin && $arrivee) {
+                $posteFin->update(['heure_debut' => $arrivee, 'heure_fin' => $arrivee]);
+            }
+        }
+
+        $this->demande->refresh()->load(['categorie', 'etapes.commune', 'devis.vehicule', 'devis.postes']);
+        if ($devis) {
+            $this->synchroniserPlanningApresModificationEtape($devis);
+        }
+        $this->flash = 'Horaires de l’étape enregistrés.';
+        $this->erreur = null;
+    }
+
+    protected function synchroniserPlanningApresModificationEtape(Devis $devis): void
+    {
+        $itineraireCalcule = filled($devis->calcul_payload['source_itineraire'] ?? null)
+            || filled($devis->calcul_payload['itineraire']['segments'] ?? null);
+        if (! $itineraireCalcule) {
+            app(MoteurCalcul::class)->recalculerRsePourDevis($devis);
+
+            return;
+        }
+
+        if (($devis->calcul_payload['rse']['grille_journaliere'] ?? []) === []) {
+            app(MoteurCalcul::class)->recalculerRsePourDevis($devis);
+        }
+
+        $this->corrigerReglementation();
     }
 
     /** Le devis en cours (affectation) pour cette demande, s'il existe. */
@@ -403,20 +507,22 @@ class DemandeShow extends Component
             $heures50 += $jour['heures_50_min'];
         }
 
-        $seuilAmplitude = (int) Parametre::get('rse_amplitude_max_min', 780);
-        $seuilConduite = (int) Parametre::get('rse_conduite_journaliere_max_min', 540);
-        $seuilTte = (int) Parametre::get('rse_tte_max_min', 900);
+        $nombreChauffeurs = max(1, (int) $devis->nb_chauffeurs);
+        $conduiteParChauffeurMax = (int) ceil($conduiteMax / $nombreChauffeurs);
+        $seuilAmplitude = $nombreChauffeurs > 1 ? 1260 : (int) Parametre::get('rse_amplitude_max_min', 780);
+        $seuilConduite = 600;
+        $seuilTte = min(660, (int) Parametre::get('rse_tte_max_min', 660));
         $reposJournalierMin = (int) Parametre::get('rse_repos_journalier_min', 660);
 
         return [
             'amplitude' => $amplitudeMax ?: null,
             'tte' => $tteMax ?: null,
-            'conduite' => $conduiteMax ?: null,
+            'conduite' => $conduiteParChauffeurMax ?: null,
             'heures100' => $heures100 ?: null,
             'heures50' => $heures50 ?: null,
             'statutAmplitude' => $this->statutIndicateur($amplitudeMax, $seuilAmplitude, 0.85),
             'statutTte' => $this->statutIndicateur($tteMax, $seuilTte, 0.85),
-            'statutConduite' => $this->statutIndicateur($conduiteMax, $seuilConduite, 0.85),
+            'statutConduite' => $this->statutIndicateur($conduiteParChauffeurMax, $seuilConduite, 0.85),
         ];
     }
 
@@ -472,19 +578,29 @@ class DemandeShow extends Component
             return ['Le calcul de la réglementation n’est pas disponible : lancez le calcul avant validation.'];
         }
 
-        $seuilAmplitude = (int) Parametre::get('rse_amplitude_max_min', 780);
+        $nombreChauffeurs = max(1, (int) $devis->nb_chauffeurs);
+        $seuilAmplitude = $nombreChauffeurs > 1 ? 1260 : (int) Parametre::get('rse_amplitude_max_min', 780);
         $seuilConduite = (int) Parametre::get('rse_conduite_journaliere_max_min', 540);
-        $seuilTte = (int) Parametre::get('rse_tte_max_min', 900);
+        $seuilTte = min(660, (int) Parametre::get('rse_tte_max_min', 660));
         $reposJournalierMin = (int) Parametre::get('rse_repos_journalier_min', 660);
 
         $alertes = [];
+        $reposReduitsParSemaine = [];
+        $reposHebdomadairesReduitsParQuinzaine = [];
 
         foreach ($grille as $jour) {
             $date = Carbon::parse($jour['date'] ?? now())->format('d/m/Y');
             $amplitude = (int) ($jour['amplitude_min'] ?? 0);
             $conduite = (int) ($jour['heures_100_min'] ?? $jour['conduite_min'] ?? 0);
             $tte = (int) ($jour['tte_min'] ?? 0);
+            $conduiteParChauffeur = (int) ceil($conduite / $nombreChauffeurs);
+            $attente = (int) ($jour['heures_50_min'] ?? $jour['attente_min'] ?? 0);
+            $tauxDisposition = (int) Parametre::get('rse_taux_temps_disposition', 50);
+            $tteParChauffeur = $conduiteParChauffeur + (int) round($attente * $tauxDisposition / 100);
             $repos = $jour['repos_precedent_min'] ?? null;
+            $semaine = Carbon::parse($jour['date'] ?? now())->format('o-W');
+            $dateAlerte = Carbon::parse($jour['date'] ?? now());
+            $quinzaine = $dateAlerte->format('o').'-'.intdiv(((int) $dateAlerte->format('W')) - 1, 2);
 
             if (($jour['statut'] ?? null) === 'Horaires incomplets') {
                 $alertes[] = 'Journée du '.$date.' : horaires incomplets, la réglementation n’est pas vérifiable (renseigner horaires de service).';
@@ -494,21 +610,62 @@ class DemandeShow extends Component
                 $alertes[] = 'Journée du '.$date.' : Amplitude de '.($this->formatMinutes($amplitude)).' > '.($this->formatMinutes($seuilAmplitude)).' (réduire amplitude).';
             }
 
-            if ($conduite > $seuilConduite) {
-                $alertes[] = 'Journée du '.$date.' : Conduite de '.($this->formatMinutes($conduite)).' > '.($this->formatMinutes($seuilConduite)).' (réduire conduite).';
+            if ($conduiteParChauffeur > 600) {
+                $alertes[] = 'Journée du '.$date.' : conduite de '.$this->formatMinutes($conduiteParChauffeur).' par chauffeur > 10h maximum.';
+            } elseif ($conduiteParChauffeur > $seuilConduite && ! empty($jour['depassement_extensions_journalieres'])) {
+                $alertes[] = 'Semaine '.$semaine.' : plus de deux journées à 10h de conduite.';
             }
 
-            if ($tte > $seuilTte) {
-                $alertes[] = 'Journée du '.$date.' : TTE de '.($this->formatMinutes($tte)).' > '.($this->formatMinutes($seuilTte)).' (réduire temps de service).';
+            if (! empty($jour['depassement_semaine']) && ceil((int) $jour['conduite_semaine_min'] / $nombreChauffeurs) > 3360) {
+                $alertes[] = 'Semaine '.$semaine.' : conduite de '.$this->formatMinutes((int) ceil((int) $jour['conduite_semaine_min'] / $nombreChauffeurs)).' par chauffeur > 56h maximum.';
+            }
+            if (! empty($jour['depassement_deux_semaines']) && ceil((int) $jour['conduite_deux_semaines_min'] / $nombreChauffeurs) > 5400) {
+                $alertes[] = 'Période de deux semaines autour du '.$date.' : conduite de '.$this->formatMinutes((int) ceil((int) $jour['conduite_deux_semaines_min'] / $nombreChauffeurs)).' par chauffeur > 90h maximum.';
+            }
+            if (! empty($jour['pause_reglementaire_manquante'])) {
+                $alertes[] = 'Journée du '.$date.' : pause de 45 min manquante après 4h30 de conduite continue.';
             }
 
-            if ($repos !== null && $repos < $reposJournalierMin) {
-                $alertes[] = 'Journée du '.$date.' : repos quotidien de '.$this->formatMinutes(max(0, (int) $repos)).' < '.$this->formatMinutes($reposJournalierMin).' (11 h minimum).';
+            if ($tteParChauffeur > $seuilTte) {
+                $alertes[] = 'Journée du '.$date.' : TTE de '.($this->formatMinutes($tteParChauffeur)).' par chauffeur > '.($this->formatMinutes($seuilTte)).' (réduire temps de service).';
             }
 
-            if (! empty($jour['relais_necessaire'])) {
+            if ($repos !== null && $repos < 540) {
+                $alertes[] = 'Journée du '.$date.' : repos quotidien de '.$this->formatMinutes(max(0, (int) $repos)).' < 9h minimum.';
+            } elseif ($repos !== null && $repos < $reposJournalierMin) {
+                $reposReduitsParSemaine[$semaine] = ($reposReduitsParSemaine[$semaine] ?? 0) + 1;
+                if ($reposReduitsParSemaine[$semaine] > 3) {
+                    $alertes[] = 'Semaine '.$semaine.' : plus de trois repos quotidiens réduits à 9h.';
+                }
+            }
+
+            $reposHebdo = $jour['repos_hebdomadaire_precedent_min'] ?? null;
+            if ($reposHebdo !== null && $reposHebdo < 1440 && (int) ($jour['jours_travail_consecutifs'] ?? 0) > 6) {
+                $alertes[] = 'Journée du '.$date.' : repos hebdomadaire de '.$this->formatMinutes(max(0, (int) $reposHebdo)).' < 24h minimum après six jours de travail.';
+            }
+            if ($reposHebdo !== null && $reposHebdo >= 1440 && $reposHebdo < 2700) {
+                $reposHebdomadairesReduitsParQuinzaine[$quinzaine] = ($reposHebdomadairesReduitsParQuinzaine[$quinzaine] ?? 0) + 1;
+                if ($reposHebdomadairesReduitsParQuinzaine[$quinzaine] > 1) {
+                    $alertes[] = 'Période de deux semaines autour du '.$date.' : plus d’un repos hebdomadaire réduit à 24h.';
+                }
+            }
+            if ((int) ($jour['jours_travail_consecutifs'] ?? 0) > 6 && ($reposHebdo === null || $reposHebdo < 1440)) {
+                $alertes[] = 'Journée du '.$date.' : plus de six jours de travail sans repos hebdomadaire d’au moins 24h.';
+            }
+
+            if (! empty($jour['relais_necessaire']) && $nombreChauffeurs < 2) {
                 $alertes[] = 'Journée du '.$date.' : relais nécessaire / 2 chauffeurs requis selon la réglementation (ajouter second chauffeur).';
             }
+        }
+
+        $conduitePlanifiee = (int) collect($grille)->sum(fn (array $jour) => (int) ($jour['heures_100_min'] ?? $jour['conduite_min'] ?? 0));
+        $conduiteCalculee = (int) data_get(
+            $devis->calcul_payload,
+            'itineraire.duree_conduite_chargee_minutes',
+            $devis->duree_conduite_minutes
+        );
+        if ($conduitePlanifiee < $conduiteCalculee) {
+            $alertes[] = 'Conduite non planifiée : '.$this->formatMinutes($conduiteCalculee - $conduitePlanifiee).' restent à répartir; ajoutez des jours ou réorganisez la tournée.';
         }
 
         return array_values(array_unique($alertes));
@@ -676,7 +833,8 @@ class DemandeShow extends Component
         // Réappliquer les overrides s'ils existent
         if ($overrides !== []) {
             $devis->update($overrides);
-            $this->recalculerCoutRevient($devis);
+            $moteur->recalculerRsePourDevis($devis);
+            $moteur->recalculerCoutsPourDevis($devis);
         } else {
             $devis->recalculerTotaux();
         }
@@ -692,7 +850,11 @@ class DemandeShow extends Component
     protected function getCoutOverrides(Devis $devis): array
     {
         $overrides = [];
-        foreach (['cout_carburant', 'cout_peage', 'cout_vignettes', 'cout_chauffeur', 'cout_charges_fixes', 'cout_charges_variables'] as $key) {
+        foreach ([
+            'distance_km', 'distance_km_charge', 'distance_km_vide',
+            'duree_conduite_minutes', 'temps_attente_minutes',
+            'cout_carburant', 'cout_peage', 'cout_vignettes', 'cout_chauffeur', 'cout_charges_fixes', 'cout_charges_variables',
+        ] as $key) {
             $originalKey = 'original_'.$key;
             if ($devis->$originalKey !== null) {
                 $overrides[$key] = $devis->$key;
@@ -752,8 +914,13 @@ class DemandeShow extends Component
             $update['override_author'] = $author.($this->override_raison ? ' — '.$this->override_raison : '');
             $update['override_at'] = $now;
             $devis->update($update);
+            $moteur = app(MoteurCalcul::class);
+            $moteur->recalculerRsePourDevis($devis);
+            $moteur->recalculerCoutsPourDevis($devis);
             Journal::enregistrer('Override devis '.$devis->reference, $this->demande->reference);
-            $this->flash = 'Valeurs modifiées avec traçabilité.';
+            $this->flash = 'Surcharges appliquées; devis et réglementation recalculés.';
+            $this->erreur = null;
+            $this->dispatch('scroll-to-section', target: 'chiffrage');
         }
 
         $this->reset('edit_distance_km', 'edit_distance_km_charge', 'edit_distance_km_vide', 'edit_duree_conduite_minutes', 'edit_temps_attente_minutes', 'override_raison');
@@ -891,6 +1058,7 @@ class DemandeShow extends Component
 
     public function ouvrirAjoutPoste(string $date): void
     {
+        $this->editingPosteId = null;
         $this->editingPosteDate = $date;
         $this->poste_type = 'conduite';
         $this->poste_heure_debut = null;
@@ -901,6 +1069,89 @@ class DemandeShow extends Component
     public function fermerAjoutPoste(): void
     {
         $this->editingPosteDate = null;
+        $this->editingPosteId = null;
+    }
+
+    public function modifierPoste(int $posteId): void
+    {
+        $devis = $this->devisActuel();
+        $poste = $devis ? Poste::query()->where('devis_id', $devis->id)->find($posteId) : null;
+        if (! $poste) {
+            return;
+        }
+
+        $this->editingPosteId = $poste->id;
+        $this->editingPosteDate = Carbon::parse($poste->date)->toDateString();
+        $this->poste_type = $poste->type;
+        $this->poste_heure_debut = $poste->heure_debut?->format('H:i');
+        $this->poste_heure_fin = $poste->heure_fin?->format('H:i');
+        $this->poste_taux = (int) $poste->taux;
+        $this->erreur = null;
+    }
+
+    public function enregistrerModificationPoste(): void
+    {
+        $devis = $this->devisActuel();
+        $poste = $devis && $this->editingPosteId
+            ? Poste::query()->where('devis_id', $devis->id)->find($this->editingPosteId)
+            : null;
+        if (! $devis || ! $poste || ! $this->editingPosteDate) {
+            return;
+        }
+
+        $this->validate([
+            'poste_type' => ['required', 'in:prise_service,conduite,attente,pause,fin_service'],
+            'poste_heure_debut' => ['required', 'date_format:H:i'],
+            'poste_heure_fin' => ['required', 'date_format:H:i'],
+            'poste_taux' => ['required', 'integer', 'in:0,50,100'],
+        ]);
+
+        $erreurType = $this->erreurTypePostePourDate($this->poste_type, $this->editingPosteDate, $poste->id);
+        if ($erreurType) {
+            $this->erreur = $erreurType;
+
+            return;
+        }
+
+        $dureeMin = $this->dureeEntreHeures($this->poste_heure_debut, $this->poste_heure_fin);
+        if ($this->poste_type === 'conduite') {
+            $conduiteExistante = (int) $devis->postes()
+                ->where('type', 'conduite')
+                ->whereKeyNot($poste->id)
+                ->sum('duree_min');
+            if ($conduiteExistante + $dureeMin > (int) $devis->duree_conduite_minutes) {
+                $this->erreur = 'La conduite saisie dépasse la durée totale calculée pour le trajet.';
+
+                return;
+            }
+        }
+        if ($this->poste_type === 'attente') {
+            $attenteExistante = (int) $devis->postes()
+                ->where('type', 'attente')
+                ->whereKeyNot($poste->id)
+                ->sum('duree_min');
+            if ($attenteExistante + $dureeMin > (int) $devis->temps_attente_minutes) {
+                $this->erreur = 'L’attente saisie dépasse la durée totale calculée pour le trajet.';
+
+                return;
+            }
+        }
+
+        $poste->update([
+            'type' => $this->poste_type,
+            'heure_debut' => $this->poste_heure_debut,
+            'heure_fin' => $this->poste_heure_fin,
+            'duree_min' => in_array($this->poste_type, ['prise_service', 'fin_service'], true) ? 0 : $dureeMin,
+            'taux' => $this->poste_type === 'pause' ? 0 : $this->poste_taux,
+            'origine' => 'saisie_manuelle',
+            'auteur' => Auth::user()?->name ?? 'secrétariat',
+            'date_modif' => now(),
+        ]);
+
+        $this->actualiserRseApresModificationPoste($devis);
+        $this->fermerAjoutPoste();
+        $this->flash = 'Poste de service modifié.';
+        $this->erreur = null;
     }
 
     public function ajouterPoste(): void
@@ -911,21 +1162,19 @@ class DemandeShow extends Component
         }
 
         $this->validate([
-            'poste_type' => ['required', 'in:prise_service,conduite,attente,fin_service'],
-            'poste_heure_debut' => ['sometimes', 'date_format:H:i'],
-            'poste_heure_fin' => ['sometimes', 'date_format:H:i'],
-            'poste_taux' => ['required', 'integer', 'in:50,100'],
+            'poste_type' => ['required', 'in:prise_service,conduite,attente,pause,fin_service'],
+            'poste_heure_debut' => ['required', 'date_format:H:i'],
+            'poste_heure_fin' => ['required', 'date_format:H:i'],
+            'poste_taux' => ['required', 'integer', 'in:0,50,100'],
         ]);
 
-        $dureeMin = null;
-        if ($this->poste_heure_debut && $this->poste_heure_fin) {
-            $d1 = Carbon::createFromFormat('H:i', $this->poste_heure_debut);
-            $d2 = Carbon::createFromFormat('H:i', $this->poste_heure_fin);
-            $dureeMin = $d1->diffInMinutes($d2);
-            if ($dureeMin < 0) {
-                $dureeMin += 1440;
-            }
+        $erreurType = $this->erreurTypePostePourDate($this->poste_type, $this->editingPosteDate);
+        if ($erreurType) {
+            $this->erreur = $erreurType;
+
+            return;
         }
+        $dureeMin = $this->dureeEntreHeures($this->poste_heure_debut, $this->poste_heure_fin);
 
         $devisActuel = $this->devisActuel();
         if (! $devisActuel) {
@@ -934,9 +1183,9 @@ class DemandeShow extends Component
             return;
         }
 
-        if (in_array($this->poste_type, ['conduite', 'prise_service', 'fin_service'], true) && $dureeMin !== null) {
+        if ($this->poste_type === 'conduite') {
             $totalConduite = (int) Poste::where('devis_id', $devisActuel->id)
-                ->whereIn('type', ['conduite', 'prise_service', 'fin_service'])
+            ->where('type', 'conduite')
                 ->sum('duree_min');
             $maxConduite = $devisActuel->duree_conduite_minutes;
             if ($totalConduite + $dureeMin > $maxConduite) {
@@ -946,7 +1195,7 @@ class DemandeShow extends Component
             }
         }
 
-        if ($this->poste_type === 'attente' && $dureeMin !== null) {
+        if ($this->poste_type === 'attente') {
             $totalAttente = (int) Poste::where('devis_id', $devisActuel->id)
                 ->where('type', 'attente')
                 ->sum('duree_min');
@@ -958,7 +1207,10 @@ class DemandeShow extends Component
             }
         }
 
-        $ordre = Poste::where('devis_id', $devisActuel->id)->where('date', $this->editingPosteDate)->max('ordre') + 1;
+        $ordre = Poste::query()
+            ->where('devis_id', $devisActuel->id)
+            ->whereRaw('DATE(date) = ?', [$this->editingPosteDate])
+            ->max('ordre') + 1;
 
         Poste::create([
             'devis_id' => $devisActuel->id,
@@ -967,21 +1219,17 @@ class DemandeShow extends Component
             'type' => $this->poste_type,
             'heure_debut' => $this->poste_heure_debut,
             'heure_fin' => $this->poste_heure_fin,
-            'duree_min' => $dureeMin,
-            'taux' => $this->poste_taux,
+            'duree_min' => in_array($this->poste_type, ['prise_service', 'fin_service'], true) ? 0 : $dureeMin,
+            'taux' => $this->poste_type === 'pause' ? 0 : $this->poste_taux,
             'origine' => 'saisie_manuelle',
             'auteur' => Auth::user()?->name ?? 'secrétariat',
             'date_modif' => now(),
         ]);
 
-        $this->editingPosteDate = null;
-        $this->demande->refresh()->load(['categorie', 'etapes.commune', 'devis.vehicule', 'devis.postes']);
-        $devis = $this->devisActuel();
-        if ($devis) {
-            app(MoteurCalcul::class)->recalculerRsePourDevis($devis);
-            $this->demande->refresh()->load(['categorie', 'etapes.commune', 'devis.vehicule', 'devis.postes']);
-        }
+        $this->actualiserRseApresModificationPoste($devisActuel);
+        $this->fermerAjoutPoste();
         $this->flash = 'Poste ajouté.';
+        $this->erreur = null;
     }
 
     public function supprimerPoste(int $posteId): void
@@ -993,13 +1241,61 @@ class DemandeShow extends Component
 
         $poste = Poste::where('devis_id', $devis->id)->findOrFail($posteId);
         $poste->delete();
-        $this->demande->refresh()->load(['categorie', 'etapes.commune', 'devis.vehicule', 'devis.postes']);
-        $devis = $this->devisActuel();
-        if ($devis) {
-            app(MoteurCalcul::class)->recalculerRsePourDevis($devis);
-            $this->demande->refresh()->load(['categorie', 'etapes.commune', 'devis.vehicule', 'devis.postes']);
-        }
+        $this->actualiserRseApresModificationPoste($devis);
         $this->flash = 'Poste supprimé.';
+    }
+
+    protected function erreurTypePostePourDate(string $type, string $date, ?int $posteId = null): ?string
+    {
+        $dates = $this->demande->etapes
+            ->pluck('date')
+            ->filter()
+            ->map(fn ($dateEtape) => Carbon::parse($dateEtape)->toDateString())
+            ->sort()
+            ->values();
+        if ($dates->isEmpty()) {
+            return 'Aucune date de trajet ne permet de positionner ce poste.';
+        }
+
+        $date = Carbon::parse($date)->toDateString();
+        if ($type === 'prise_service' && $date !== $dates->first()) {
+            return 'La prise de service doit figurer uniquement le premier jour du trajet.';
+        }
+        if ($type === 'fin_service' && $date !== $dates->last()) {
+            return 'La fin de service doit figurer uniquement le dernier jour du trajet.';
+        }
+        if (in_array($type, ['prise_service', 'fin_service'], true)) {
+            $devisId = $this->devisActuel()?->id;
+            $existe = Poste::query()
+                ->where('devis_id', $devisId)
+                ->whereDate('date', $date)
+                ->where('type', $type)
+                ->when($posteId, fn ($query) => $query->whereKeyNot($posteId))
+                ->exists();
+            if ($existe) {
+                return $type === 'prise_service'
+                    ? 'Une prise de service existe déjà pour le premier jour.'
+                    : 'Une fin de service existe déjà pour le dernier jour.';
+            }
+        }
+
+        return null;
+    }
+
+    protected function dureeEntreHeures(string $debut, string $fin): int
+    {
+        $debutMin = Carbon::createFromFormat('H:i', $debut)->hour * 60 + Carbon::createFromFormat('H:i', $debut)->minute;
+        $finCarbon = Carbon::createFromFormat('H:i', $fin);
+        $finMin = $finCarbon->hour * 60 + $finCarbon->minute;
+
+        return $finMin >= $debutMin ? $finMin - $debutMin : 1440 - $debutMin + $finMin;
+    }
+
+    protected function actualiserRseApresModificationPoste(Devis $devis): void
+    {
+        $this->demande->refresh()->load(['categorie', 'etapes.commune', 'devis.vehicule', 'devis.postes']);
+        app(MoteurCalcul::class)->recalculerRsePourDevis($devis);
+        $this->demande->refresh()->load(['categorie', 'etapes.commune', 'devis.vehicule', 'devis.postes']);
     }
 
     // --- Prestations supplémentaires (lignes libres) ---
@@ -1074,12 +1370,6 @@ class DemandeShow extends Component
             return;
         }
 
-        if (! $this->reglementationEstValide()) {
-            $this->erreur = 'La demande ne peut pas être confirmée tant que la réglementation sociale (RSE) n’est pas conforme. Vérifiez les alertes ci-dessous.';
-
-            return;
-        }
-
         $devis->update(['statut' => $statutDevis]);
         if ($statutDevis === 'valide') {
             $this->alimenterCarnet();
@@ -1100,21 +1390,250 @@ class DemandeShow extends Component
             return;
         }
 
-        $grille = $devis->calcul_payload['rse']['grille_journaliere'] ?? [];
-        if ($grille === []) {
+        if (($devis->calcul_payload['rse']['grille_journaliere'] ?? []) === []) {
             $this->erreur = 'Lancez d’abord le calcul du devis pour obtenir les seuils réglementaires.';
 
             return;
         }
 
+        $moteur = app(MoteurCalcul::class);
+        $devis->postes()->where('origine', 'correction_reglementaire')->delete();
+        $moteur->recalculerRsePourDevis($devis);
+        $devis->refresh();
+        $this->demande->refresh()->load(['categorie', 'etapes.commune', 'devis.vehicule', 'devis.postes']);
+        $this->completerHeuresArriveeSelonVitesseBus();
+        $this->demande->refresh()->load(['categorie', 'etapes.commune', 'devis.vehicule', 'devis.postes']);
+        $derniereDateDestination = $this->demande->etapes->max('date');
+        if ($derniereDateDestination) {
+            $devis->postes()->whereDate('date', '>', $derniereDateDestination)->delete();
+        }
+        $moteur->recalculerRsePourDevis($devis);
+        $devis->refresh();
+        $grille = $devis->calcul_payload['rse']['grille_journaliere'] ?? [];
         $this->corrigerHorairesManquantsPourReglementation($devis, $grille);
+        $this->synchroniserArriveeFinaleAvecFinService($devis);
 
         $this->demande->refresh()->load(['categorie', 'etapes.commune', 'devis.vehicule', 'devis.postes']);
-        app(MoteurCalcul::class)->recalculerRsePourDevis($devis);
+        $moteur->recalculerRsePourDevis($devis);
+        $moteur->recalculerCoutsPourDevis($devis);
         $this->demande->refresh()->load(['categorie', 'etapes.commune', 'devis.vehicule', 'devis.postes']);
 
-        $this->flash = 'Horaires répartis selon la durée calculée et les heures saisies. Vérifiez les alertes réglementaires restantes.';
+        $this->flash = 'Arrivées estimées à 80 km/h et horaires organisés selon les pauses/repos. Vérifiez les alertes restantes.';
         $this->erreur = null;
+    }
+
+    protected function synchroniserArriveeFinaleAvecFinService(Devis $devis): void
+    {
+        $etapeFinale = $this->demande->etapes->sortBy('ordre')->last();
+        $posteFin = $devis->postes()
+            ->where('type', 'fin_service')
+            ->orderByDesc('date')
+            ->first();
+        if (! $etapeFinale || ! $posteFin?->date || ! $posteFin->heure_fin) {
+            return;
+        }
+
+        $heureArriveeEtape = $etapeFinale->heure_arrivee ?: '00:00';
+        $arriveeEtape = Carbon::parse($etapeFinale->date->toDateString().' '.substr((string) $heureArriveeEtape, 0, 5));
+        $arriveePlanifiee = Carbon::parse($posteFin->date->toDateString().' '.$posteFin->heure_fin->format('H:i'));
+        if ($arriveePlanifiee->gt($arriveeEtape)) {
+            $etapeFinale->update([
+                'date' => $arriveePlanifiee->toDateString(),
+                'heure_arrivee' => $arriveePlanifiee->format('H:i'),
+            ]);
+        }
+    }
+
+    protected function completerHeuresArriveeSelonVitesseBus(): void
+    {
+        $etapes = $this->demande->etapes->sortBy('ordre')->values();
+        if ($etapes->count() < 2) {
+            return;
+        }
+
+        $premiere = $etapes->first();
+        if (! $premiere->heure_depart && ! $premiere->heure_arrivee) {
+            $premiere->heure_depart = '08:00';
+            $premiere->save();
+        }
+
+        $reposQuotidienMin = (int) Parametre::get('rse_repos_journalier_min', 660);
+        $devis = $this->devisActuel();
+        $nombreChauffeurs = max(1, (int) ($devis?->nb_chauffeurs ?? 1));
+        $conduiteMaxJour = $nombreChauffeurs > 1 ? 1080 : 540;
+        $conduiteAvantPause = (int) Parametre::get('rse_conduite_avant_pause_min', 270);
+        $dureePause = (int) Parametre::get('rse_duree_pause_min', 45);
+        $conduiteContinue = 0;
+        $conduiteJour = 0;
+        $joursConsecutifs = 1;
+
+        for ($index = 1; $index < $etapes->count(); $index++) {
+            $precedente = $etapes[$index - 1];
+            $etape = $etapes[$index];
+            $dureeTroncon = data_get(
+                $devis?->calcul_payload,
+                'itineraire.duree_par_troncon_etape.'.$precedente->id.':'.$etape->id
+            );
+            $distanceKm = $dureeTroncon === null ? $this->distanceRoutiereEstimee($precedente, $etape) : null;
+            if ($dureeTroncon === null && $distanceKm === null) {
+                continue;
+            }
+
+            $minutesConduite = $dureeTroncon !== null
+                ? (int) $dureeTroncon
+                : (int) ceil(($distanceKm / 80) * 60);
+            $datePrecedente = Carbon::parse($precedente->date)->startOfDay();
+            $heurePrecedente = $precedente->heure_depart ?: $precedente->heure_arrivee ?: '08:00';
+            $departSaisi = Carbon::parse($datePrecedente->toDateString().' '.substr((string) $heurePrecedente, 0, 5));
+
+            if (! $precedente->heure_depart && $etape->heure_arrivee && $etape->date
+                && Carbon::parse($etape->date)->toDateString() === $datePrecedente->toDateString()) {
+                $arriveeSaisie = Carbon::parse($etape->date->toDateString().' '.substr((string) $etape->heure_arrivee, 0, 5));
+                $dureeTrajet = $this->dureeTrajetAvecReglementation($minutesConduite, $conduiteAvantPause, $dureePause);
+                $departEstime = $arriveeSaisie->copy()->subMinutes($dureeTrajet);
+                if ($departEstime->toDateString() === $datePrecedente->toDateString()) {
+                    $departSaisi = $departEstime;
+                    $precedente->heure_depart = $departSaisi->format('H:i');
+                    $precedente->save();
+                }
+            }
+
+            if ($precedente->heure_arrivee && $precedente->date) {
+                $arriveePrecedente = Carbon::parse($precedente->date->toDateString().' '.substr((string) $precedente->heure_arrivee, 0, 5));
+                if ($departSaisi->gte($arriveePrecedente)) {
+                    $reposEntreEtapes = $arriveePrecedente->diffInMinutes($departSaisi);
+                    if ($reposEntreEtapes >= $reposQuotidienMin) {
+                        $conduiteContinue = 0;
+                        $conduiteJour = 0;
+                        $joursConsecutifs = 1;
+                    } elseif ($reposEntreEtapes >= $dureePause) {
+                        $conduiteContinue = 0;
+                    }
+                }
+            }
+
+            $arriveeCalculee = $this->avancerConduiteAvecRepos(
+                $departSaisi,
+                $minutesConduite,
+                $conduiteContinue,
+                $conduiteJour,
+                $joursConsecutifs,
+                $conduiteAvantPause,
+                $dureePause,
+                $reposQuotidienMin,
+                $conduiteMaxJour,
+                $nombreChauffeurs
+            );
+
+            if (! $etape->heure_arrivee) {
+                $etape->date = $arriveeCalculee->toDateString();
+                $etape->heure_arrivee = $arriveeCalculee->format('H:i');
+                $etape->save();
+            } elseif ($etape->date) {
+                $arriveeSaisie = Carbon::parse($etape->date->toDateString().' '.substr((string) $etape->heure_arrivee, 0, 5));
+                if ($arriveeSaisie->gt($arriveeCalculee)) {
+                    $arriveeCalculee = $arriveeSaisie;
+                } else {
+                    $etape->date = $arriveeCalculee->toDateString();
+                    $etape->heure_arrivee = $arriveeCalculee->format('H:i');
+                    $etape->save();
+                }
+            }
+
+            if ($index < $etapes->count() - 1 && ! $etape->heure_depart && $etape->heure_arrivee) {
+                $etape->heure_depart = substr((string) $etape->heure_arrivee, 0, 5);
+                $etape->save();
+            }
+
+            if ($etape->heure_depart && $etape->date) {
+                $departEtapeSuivante = Carbon::parse($etape->date->toDateString().' '.substr((string) $etape->heure_depart, 0, 5));
+                if ($departEtapeSuivante->gte($arriveeCalculee)) {
+                    $tempsArret = $arriveeCalculee->diffInMinutes($departEtapeSuivante);
+                    if ($tempsArret >= $dureePause) {
+                        $conduiteContinue = 0;
+                    }
+                    if ($tempsArret >= $reposQuotidienMin) {
+                        $conduiteJour = 0;
+                        $joursConsecutifs = 1;
+                    }
+                }
+            }
+        }
+    }
+
+    protected function distanceRoutiereEstimee(Etape $depart, Etape $arrivee): ?float
+    {
+        $lat1 = $depart->latitude ?? $depart->commune?->latitude;
+        $lng1 = $depart->longitude ?? $depart->commune?->longitude;
+        $lat2 = $arrivee->latitude ?? $arrivee->commune?->latitude;
+        $lng2 = $arrivee->longitude ?? $arrivee->commune?->longitude;
+        if (! is_numeric($lat1) || ! is_numeric($lng1) || ! is_numeric($lat2) || ! is_numeric($lng2)) {
+            return null;
+        }
+
+        $rayonTerreKm = 6371.0;
+        $differenceLatitude = deg2rad((float) $lat2 - (float) $lat1);
+        $differenceLongitude = deg2rad((float) $lng2 - (float) $lng1);
+        $a = sin($differenceLatitude / 2) ** 2
+            + cos(deg2rad((float) $lat1)) * cos(deg2rad((float) $lat2)) * sin($differenceLongitude / 2) ** 2;
+        $distanceVolOiseau = $rayonTerreKm * 2 * atan2(sqrt($a), sqrt(1 - $a));
+
+        return $distanceVolOiseau * 1.25;
+    }
+
+    protected function dureeTrajetAvecReglementation(int $minutesConduite, int $seuilPause, int $dureePause): int
+    {
+        if ($minutesConduite <= $seuilPause || $seuilPause <= 0) {
+            return $minutesConduite;
+        }
+
+        return $minutesConduite + (int) floor(($minutesConduite - 1) / $seuilPause) * $dureePause;
+    }
+
+    protected function avancerConduiteAvecRepos(
+        Carbon $depart,
+        int $minutesConduite,
+        int &$conduiteContinue,
+        int &$conduiteJour,
+        int &$joursConsecutifs,
+        int $seuilPause,
+        int $dureePause,
+        int $reposQuotidienMin,
+        int $conduiteMaxJour,
+        int $nombreChauffeurs
+    ): Carbon {
+        $arrivee = $depart->copy();
+        $restant = $minutesConduite;
+        while ($restant > 0) {
+            if ($conduiteJour >= $conduiteMaxJour) {
+                $repos = $joursConsecutifs >= 6 ? 2700 : $reposQuotidienMin;
+                $arrivee->addMinutes($repos);
+                $debutJournee = $arrivee->copy()->startOfDay()->addHours(8);
+                if ($arrivee->lt($debutJournee)) {
+                    $arrivee = $debutJournee;
+                }
+                $conduiteContinue = 0;
+                $conduiteJour = 0;
+                $joursConsecutifs = $repos >= 2700 ? 1 : $joursConsecutifs + 1;
+            }
+            if ($nombreChauffeurs === 1 && $conduiteContinue >= $seuilPause) {
+                $arrivee->addMinutes($dureePause);
+                $conduiteContinue = 0;
+            }
+
+            $segment = $nombreChauffeurs > 1
+                ? min($restant, $conduiteMaxJour - $conduiteJour)
+                : min($restant, $seuilPause - $conduiteContinue, $conduiteMaxJour - $conduiteJour);
+            if ($segment <= 0) {
+                break;
+            }
+            $arrivee->addMinutes($segment);
+            $conduiteContinue = $nombreChauffeurs > 1 ? 0 : $conduiteContinue + $segment;
+            $conduiteJour += $segment;
+            $restant -= $segment;
+        }
+
+        return $arrivee;
     }
 
     protected function corrigerHorairesManquantsPourReglementation(Devis $devis, array $grille): void
@@ -1148,16 +1667,215 @@ class DemandeShow extends Component
             ->where('devis_id', $devis->id)
             ->where('origine', '!=', 'correction_reglementaire')
             ->get();
-        $conduiteManuelleTotale = (int) $postesManuels->where('type', 'conduite')->sum('duree_min');
-        $attenteManuelleTotale = (int) $postesManuels->where('type', 'attente')->sum('duree_min');
-        $conduiteRestante = max(0, (int) $devis->duree_conduite_minutes - $conduiteManuelleTotale);
-        $attenteRestante = max(0, (int) $devis->temps_attente_minutes - $attenteManuelleTotale);
-        $nombreJours = $jours->count();
-        $reposJournalierMin = (int) Parametre::get('rse_repos_journalier_min', 660);
-        $conduiteParJour = intdiv($conduiteRestante, $nombreJours);
-        $resteConduite = $conduiteRestante % $nombreJours;
-        $attenteParJour = intdiv($attenteRestante, $nombreJours);
-        $resteAttente = $attenteRestante % $nombreJours;
+        $joursConduiteImpossible = $postesManuels
+            ->where('type', 'conduite')
+            ->groupBy(fn (Poste $poste) => Carbon::parse($poste->date)->toDateString())
+            ->filter(fn ($postes) => (int) $postes->sum('duree_min') > 600)
+            ->keys();
+        if ($joursConduiteImpossible->isNotEmpty()) {
+            $postesAReplanifier = $postesManuels
+                ->filter(fn (Poste $poste) => $joursConduiteImpossible->contains(Carbon::parse($poste->date)->toDateString())
+                    && in_array($poste->type, ['conduite', 'pause'], true))
+                ->pluck('id');
+            Poste::query()->whereKey($postesAReplanifier)->delete();
+            $postesManuels = $postesManuels
+                ->reject(fn (Poste $poste) => $postesAReplanifier->contains($poste->id))
+                ->values();
+        }
+        $marqueursConserves = [];
+        $postesServiceARejeter = collect();
+        foreach ($postesManuels->whereIn('type', ['prise_service', 'fin_service']) as $posteService) {
+            $datePoste = Carbon::parse($posteService->date)->toDateString();
+            $dateAutorisee = $posteService->type === 'prise_service' ? $jours->first() : $jours->last();
+            if ($datePoste !== $dateAutorisee || isset($marqueursConserves[$posteService->type])) {
+                $postesServiceARejeter->push($posteService->id);
+
+                continue;
+            }
+            $marqueursConserves[$posteService->type] = true;
+        }
+        if ($postesServiceARejeter->isNotEmpty()) {
+            Poste::query()->whereKey($postesServiceARejeter)->delete();
+            $postesManuels = $postesManuels
+                ->reject(fn (Poste $poste) => $postesServiceARejeter->contains($poste->id))
+                ->values();
+        }
+        $datesEtapes = $this->demande->etapes
+            ->pluck('date')
+            ->filter()
+            ->map(fn ($date) => Carbon::parse($date)->toDateString())
+            ->all();
+
+        // Prévoir un jour de repos hebdomadaire lorsqu’une journée sans étape est disponible.
+        $joursRepos = [];
+        $joursTravaillesConsecutifs = 0;
+        foreach ($jours as $index => $date) {
+            if ($joursTravaillesConsecutifs >= 6
+                && $index < $jours->count() - 1
+                && ! in_array($date, $datesEtapes, true)) {
+                $joursRepos[] = $date;
+                $joursTravaillesConsecutifs = 0;
+
+                continue;
+            }
+            $joursTravaillesConsecutifs++;
+        }
+
+        $joursActifs = $jours->reject(fn ($date) => in_array($date, $joursRepos, true))->values();
+        $conduiteManuelleParJour = $postesManuels->where('type', 'conduite')
+            ->groupBy(fn (Poste $poste) => Carbon::parse($poste->date)->toDateString())
+            ->map(fn ($postes) => (int) $postes->sum('duree_min'));
+        $attenteManuelleParJour = $postesManuels->where('type', 'attente')
+            ->groupBy(fn (Poste $poste) => Carbon::parse($poste->date)->toDateString())
+            ->map(fn ($postes) => (int) $postes->sum('duree_min'));
+        $dureeConduitePlanning = (int) data_get(
+            $devis->calcul_payload,
+            'itineraire.duree_conduite_chargee_minutes',
+            $devis->duree_conduite_minutes
+        );
+        $nombreChauffeurs = max(1, (int) $devis->nb_chauffeurs);
+        $capaciteMaxParJour = $nombreChauffeurs > 1 ? 1080 : 540;
+        $conduiteRestante = max(0, $dureeConduitePlanning - (int) $conduiteManuelleParJour->sum());
+        $attenteRestante = max(0, (int) $devis->temps_attente_minutes - (int) $attenteManuelleParJour->sum());
+
+        $capaciteConduiteParJour = $joursActifs->mapWithKeys(fn ($date) => [$date => $capaciteMaxParJour])->all();
+        $premierJour = $joursActifs->first();
+        $etapesPremierJour = $this->demande->etapes
+            ->filter(fn ($etape) => $etape->date && $etape->date->toDateString() === $premierJour)
+            ->sortBy('ordre')
+            ->values();
+        if ($premierJour && $etapesPremierJour->count() >= 2) {
+            $heureDebutPremierJour = $etapesPremierJour->first()->heure_depart;
+            $heureArriveePremierJour = $etapesPremierJour->last()->heure_arrivee;
+            if ($heureDebutPremierJour && $heureArriveePremierJour) {
+                $debutDisponible = Carbon::createFromFormat('H:i', substr((string) $heureDebutPremierJour, 0, 5));
+                $finDisponible = Carbon::createFromFormat('H:i', substr((string) $heureArriveePremierJour, 0, 5));
+                $minutesDisponibles = $debutDisponible->diffInMinutes($finDisponible);
+                if ($minutesDisponibles < 0) {
+                    $minutesDisponibles += 1440;
+                }
+                $capaciteConduiteParJour[$premierJour] = min(
+                    $capaciteMaxParJour,
+                    $nombreChauffeurs > 1 ? $minutesDisponibles : $this->conduiteMaxDansFenetre($minutesDisponibles)
+                );
+            }
+        }
+
+        $derniereEtape = $this->demande->etapes->sortBy('ordre')->last();
+        $derniereDate = $derniereEtape?->date?->toDateString();
+        if ($derniereDate && $derniereEtape?->heure_arrivee) {
+            $debutFenetre = Carbon::parse($derniereDate.' 08:00');
+            if ($derniereDate === $joursActifs->first()) {
+                $heureDepart = $this->demande->etapes->sortBy('ordre')->first()?->heure_depart;
+                if ($heureDepart) {
+                    $debutFenetre = Carbon::parse($derniereDate.' '.substr((string) $heureDepart, 0, 5));
+                }
+            }
+            $finFenetre = Carbon::parse($derniereDate.' '.substr((string) $derniereEtape->heure_arrivee, 0, 5));
+            $minutesDisponibles = max(0, (int) floor(($finFenetre->timestamp - $debutFenetre->timestamp) / 60));
+            $capaciteConduiteParJour[$derniereDate] = min(
+                (int) ($capaciteConduiteParJour[$derniereDate] ?? $capaciteMaxParJour),
+                $nombreChauffeurs > 1 ? $minutesDisponibles : $this->conduiteMaxDansFenetre($minutesDisponibles)
+            );
+        }
+
+        $capaciteDisponible = array_sum($capaciteConduiteParJour)
+            - (int) $conduiteManuelleParJour->sum();
+        $joursConsecutifsPlanifies = 0;
+        foreach ($jours as $date) {
+            if (in_array($date, $joursRepos, true)) {
+                $joursConsecutifsPlanifies = 0;
+            } else {
+                $joursConsecutifsPlanifies++;
+            }
+        }
+        $prochaineDate = Carbon::parse($jours->last());
+        $joursEtendus = false;
+        while ($capaciteDisponible < $conduiteRestante && $jours->count() < 370) {
+            $prochaineDate->addDay();
+            $date = $prochaineDate->toDateString();
+            if ($joursConsecutifsPlanifies >= 6 && ! in_array($date, $datesEtapes, true)) {
+                $joursRepos[] = $date;
+                $jours->push($date);
+                $joursConsecutifsPlanifies = 0;
+
+                continue;
+            }
+
+            $jours->push($date);
+            $joursActifs->push($date);
+            $capaciteConduiteParJour[$date] = $capaciteMaxParJour;
+            $capaciteDisponible += $capaciteMaxParJour;
+            $joursEtendus = true;
+            $joursConsecutifsPlanifies++;
+        }
+
+        $marqueursFinEnTrop = $postesManuels
+            ->where('type', 'fin_service')
+            ->filter(fn (Poste $poste) => Carbon::parse($poste->date)->toDateString() !== $jours->last())
+            ->pluck('id');
+        if ($marqueursFinEnTrop->isNotEmpty()) {
+            Poste::query()->whereKey($marqueursFinEnTrop)->delete();
+            $postesManuels = $postesManuels
+                ->reject(fn (Poste $poste) => $marqueursFinEnTrop->contains($poste->id))
+                ->values();
+        }
+
+        $conduiteAutoParJour = [];
+        $conduiteAutoParSemaine = [];
+        $conduiteAutoParQuinzaine = [];
+        $seuilTte = min(660, (int) Parametre::get('rse_tte_max_min', 660));
+        $joursRestants = max(1, $joursActifs->count());
+        foreach ($joursActifs as $indexJour => $date) {
+            $semaine = Carbon::parse($date)->format('o-W');
+            $dateQuinzaine = Carbon::parse($date);
+            $quinzaine = $dateQuinzaine->format('o').'-'.intdiv(((int) $dateQuinzaine->format('W')) - 1, 2);
+            $conduiteManuelleJour = (int) $conduiteManuelleParJour->get($date, 0);
+            $conduiteManuelleSemaine = (int) $postesManuels
+                ->where('type', 'conduite')
+                ->filter(fn (Poste $poste) => Carbon::parse($poste->date)->format('o-W') === $semaine)
+                ->sum('duree_min');
+            $conduiteManuelleQuinzaine = (int) $postesManuels
+                ->where('type', 'conduite')
+                ->filter(function (Poste $poste) use ($quinzaine) {
+                    $datePoste = Carbon::parse($poste->date);
+
+                    return $datePoste->format('o').'-'.intdiv(((int) $datePoste->format('W')) - 1, 2) === $quinzaine;
+                })
+                ->sum('duree_min');
+            $cumulSemaine = (int) collect($conduiteAutoParSemaine)->get($semaine, 0);
+            $cumulQuinzaine = (int) collect($conduiteAutoParQuinzaine)->get($quinzaine, 0);
+            $conduiteParJourEquilibree = $joursEtendus ? $conduiteRestante : (int) ceil($conduiteRestante / $joursRestants);
+            $datesSuivantes = $joursActifs->slice($indexJour + 1);
+            $capaciteSuivante = (int) $datesSuivantes->sum(fn ($dateSuivant) => $capaciteConduiteParJour[$dateSuivant] ?? 0);
+            $conduiteNecessaireAujourdhui = max(0, $conduiteRestante - $capaciteSuivante);
+            $conduiteAuto = min(
+                max($conduiteParJourEquilibree, $conduiteNecessaireAujourdhui),
+                max(0, (int) ($capaciteConduiteParJour[$date] ?? 540) - $conduiteManuelleJour),
+                max(0, 3360 * $nombreChauffeurs - $conduiteManuelleSemaine - $cumulSemaine),
+                max(0, 5400 * $nombreChauffeurs - $conduiteManuelleQuinzaine - $cumulQuinzaine)
+            );
+            $conduiteAutoParJour[$date] = $conduiteAuto;
+            $conduiteRestante -= $conduiteAuto;
+            $joursRestants--;
+            $conduiteAutoParSemaine[$semaine] = $cumulSemaine + $conduiteAuto;
+            $conduiteAutoParQuinzaine[$quinzaine] = $cumulQuinzaine + $conduiteAuto;
+        }
+
+        $attenteAutoParJour = [];
+        $joursRestants = max(1, $joursActifs->count());
+        foreach ($joursActifs as $date) {
+            $attenteManuelleJour = (int) $attenteManuelleParJour->get($date, 0);
+            $conduiteJour = (int) $conduiteManuelleParJour->get($date, 0) + (int) ($conduiteAutoParJour[$date] ?? 0);
+            $attenteAuto = min(
+                $attenteRestante,
+                max(0, ($seuilTte - $conduiteJour) * 2 - $attenteManuelleJour),
+                (int) ceil($attenteRestante / $joursRestants)
+            );
+            $attenteAutoParJour[$date] = $attenteAuto;
+            $attenteRestante -= $attenteAuto;
+            $joursRestants--;
+        }
 
         // Retirer les postes produits par une correction précédente rend l’action répétable.
         Poste::query()
@@ -1165,75 +1883,97 @@ class DemandeShow extends Component
             ->where('origine', 'correction_reglementaire')
             ->delete();
 
+        $derniereJourneeActive = null;
+        $finDerniereJourneeActive = null;
         foreach ($jours as $index => $date) {
-            $dateObj = Carbon::parse($date);
             $etapesJour = $this->demande->etapes
                 ->filter(fn ($etape) => $etape->date && $etape->date->toDateString() === $date)
                 ->sortBy('ordre');
             $postesJour = $postesManuels->filter(fn (Poste $poste) => Carbon::parse($poste->date)->toDateString() === $date);
             $conduiteManuelleJour = (int) $postesJour->where('type', 'conduite')->sum('duree_min');
             $attenteManuelleJour = (int) $postesJour->where('type', 'attente')->sum('duree_min');
-            $conduiteAuto = $conduiteParJour + ($index < $resteConduite ? 1 : 0);
-            $attenteAuto = $attenteParJour + ($index < $resteAttente ? 1 : 0);
+            $conduiteAuto = (int) ($conduiteAutoParJour[$date] ?? 0);
+            $attenteAuto = (int) ($attenteAutoParJour[$date] ?? 0);
+            if (in_array($date, $joursRepos, true)) {
+                continue;
+            }
 
             $heureEtapeDebut = $etapesJour->pluck('heure_depart')->filter()->first();
             $heureEtapeFin = $etapesJour->pluck('heure_arrivee')->filter()->last();
-            $postePrise = $postesJour->firstWhere('type', 'prise_service');
-            $posteFin = $postesJour->firstWhere('type', 'fin_service');
+            $postePrise = $index === 0 ? $postesJour->firstWhere('type', 'prise_service') : null;
+            $posteFin = $index === $jours->count() - 1 ? $postesJour->firstWhere('type', 'fin_service') : null;
             $heureDebutSaisie = $postePrise?->heure_debut ?? $heureEtapeDebut;
             $heureDebut = $this->normaliserHeurePoste($heureDebutSaisie, '08:00');
-            if (! $heureDebutSaisie && $index > 0) {
-                $posteFinPrecedent = Poste::query()
-                    ->where('devis_id', $devis->id)
-                    ->whereDate('date', $jours[$index - 1])
-                    ->where('type', 'fin_service')
-                    ->first();
-                if ($posteFinPrecedent?->heure_fin) {
-                    $finPrecedente = Carbon::parse($jours[$index - 1].' '.$this->normaliserHeurePoste($posteFinPrecedent->heure_fin, '17:00'));
-                    $debutMinimum = $finPrecedente->copy()->addMinutes($reposJournalierMin);
-                    $debutParDefaut = Carbon::parse($date.' 08:00');
-                    if ($debutMinimum->toDateString() === $date && $debutMinimum->gt($debutParDefaut)) {
-                        $heureDebut = $debutMinimum->format('H:i');
-                    }
+            if (! $heureDebutSaisie && $finDerniereJourneeActive) {
+                $reposMinimum = count(array_filter($joursRepos, fn ($jourRepos) => $jourRepos > $derniereJourneeActive && $jourRepos < $date)) > 0
+                    ? 2700
+                    : (int) Parametre::get('rse_repos_journalier_min', 660);
+                $debutMinimum = $finDerniereJourneeActive->copy()->addMinutes($reposMinimum);
+                $debutParDefaut = Carbon::parse($date.' 08:00');
+                if ($debutMinimum->toDateString() === $date && $debutParDefaut->lt($debutMinimum)) {
+                    $heureDebut = $debutMinimum->format('H:i');
                 }
             }
-            $heureFinDefaut = $this->ajouterMinutesHeure(
-                $heureDebut,
-                $conduiteManuelleJour + $conduiteAuto + $attenteManuelleJour + $attenteAuto
+            $heureConduiteDebut = $this->ajouterMinutesHeure($heureDebut, $conduiteManuelleJour);
+            $heureFin = $this->ajouterMinutesHeure(
+                $heureConduiteDebut,
+                $conduiteAuto + $attenteManuelleJour + $attenteAuto + ($conduiteAuto > 270 ? 45 : 0)
             );
-            $heureFin = $this->normaliserHeurePoste($posteFin?->heure_fin ?? $heureEtapeFin, $heureFinDefaut);
+            if ($nombreChauffeurs > 1) {
+                $heureFin = $this->ajouterMinutesHeure(
+                    $heureConduiteDebut,
+                    $conduiteAuto + $attenteManuelleJour + $attenteAuto
+                );
+            }
+            $heureFinSaisie = $posteFin?->heure_fin ?? $heureEtapeFin;
+            if ($heureFinSaisie && $index === $jours->count() - 1) {
+                $heureFin = $this->normaliserHeurePoste($heureFinSaisie, $heureFin);
+            }
             $ordre = (int) Poste::query()
                 ->where('devis_id', $devis->id)
                 ->whereDate('date', $date)
                 ->max('ordre');
 
-            if (! $postePrise) {
+            if ($index === 0 && ! $postePrise) {
                 $this->creerPosteCorrection($devis, $date, ++$ordre, 'prise_service', $heureDebut, $heureDebut, 0);
-            } elseif (! $postePrise->heure_debut) {
-                $postePrise->update(['heure_debut' => $heureDebut]);
             }
-
-            if (! $posteFin) {
+            if ($index === $jours->count() - 1 && ! $posteFin) {
                 $this->creerPosteCorrection($devis, $date, ++$ordre, 'fin_service', $heureFin, $heureFin, 0);
-            } elseif (! $posteFin->heure_fin) {
-                $posteFin->update(['heure_fin' => $heureFin]);
             }
 
-            $heureConduiteDebut = $this->ajouterMinutesHeure($heureDebut, $conduiteManuelleJour);
             if ($conduiteAuto > 0) {
-                $this->creerPosteCorrection(
-                    $devis,
-                    $date,
-                    ++$ordre,
-                    'conduite',
-                    $heureConduiteDebut,
-                    $this->ajouterMinutesHeure($heureConduiteDebut, $conduiteAuto),
-                    $conduiteAuto
-                );
+                if ($nombreChauffeurs > 1) {
+                    $minutesRestantes = $conduiteAuto;
+                    $debutConduite = $heureConduiteDebut;
+                    while ($minutesRestantes > 0) {
+                        $dureeConduite = min(270, $minutesRestantes);
+                        $finConduite = $this->ajouterMinutesHeure($debutConduite, $dureeConduite);
+                        $this->creerPosteCorrection($devis, $date, ++$ordre, 'conduite', $debutConduite, $finConduite, $dureeConduite);
+                        $minutesRestantes -= $dureeConduite;
+                        $debutConduite = $finConduite;
+                    }
+                } else {
+                    $premiereConduite = min(270, $conduiteAuto);
+                    $finPremiereConduite = $this->ajouterMinutesHeure($heureConduiteDebut, $premiereConduite);
+                    $this->creerPosteCorrection($devis, $date, ++$ordre, 'conduite', $heureConduiteDebut, $finPremiereConduite, $premiereConduite);
+                    if ($conduiteAuto > 270) {
+                        $debutSecondeConduite = $this->ajouterMinutesHeure($finPremiereConduite, 45);
+                        $this->creerPosteCorrection($devis, $date, ++$ordre, 'pause', $finPremiereConduite, $debutSecondeConduite, 45);
+                    $this->creerPosteCorrection(
+                        $devis,
+                        $date,
+                        ++$ordre,
+                        'conduite',
+                        $debutSecondeConduite,
+                        $this->ajouterMinutesHeure($debutSecondeConduite, $conduiteAuto - 270),
+                        $conduiteAuto - 270
+                    );
+                    }
+                }
             }
 
             if ($attenteAuto > 0) {
-                $heureAttenteDebut = $this->ajouterMinutesHeure($heureConduiteDebut, $conduiteAuto);
+                $heureAttenteDebut = $this->ajouterMinutesHeure($heureConduiteDebut, $conduiteAuto + ($conduiteAuto > 270 ? 45 : 0));
                 $this->creerPosteCorrection(
                     $devis,
                     $date,
@@ -1244,6 +1984,79 @@ class DemandeShow extends Component
                     $attenteAuto
                 );
             }
+
+            $derniereJourneeActive = $date;
+            $finDerniereJourneeActive = Carbon::parse($date.' '.$heureFin);
+        }
+
+        $this->synchroniserPostesAvecHorairesEtapes($devis);
+    }
+
+    protected function synchroniserPostesAvecHorairesEtapes(Devis $devis): void
+    {
+        $frontieres = $this->demande->etapes
+            ->flatMap(function (Etape $etape) {
+                if (! $etape->date) {
+                    return [];
+                }
+
+                return collect([$etape->heure_arrivee, $etape->heure_depart])
+                    ->filter()
+                    ->map(fn ($heure) => [
+                        'date' => Carbon::parse($etape->date)->toDateString(),
+                        'heure' => substr((string) $heure, 0, 5),
+                    ]);
+            })
+            ->sortBy(fn (array $frontiere) => $frontiere['date'].' '.$frontiere['heure']);
+
+        foreach ($frontieres as $frontiere) {
+            $heureFrontiere = Carbon::createFromFormat('H:i', $frontiere['heure']);
+            $poste = Poste::query()
+                ->where('devis_id', $devis->id)
+                ->whereDate('date', $frontiere['date'])
+                ->where('type', 'conduite')
+                ->where('origine', 'correction_reglementaire')
+                ->get()
+                ->first(fn (Poste $poste) => Carbon::parse($poste->heure_debut)->lt($heureFrontiere)
+                    && Carbon::parse($poste->heure_fin)->gt($heureFrontiere));
+
+            if (! $poste) {
+                continue;
+            }
+
+            $debutPoste = Carbon::parse($poste->heure_debut);
+            $finPoste = Carbon::parse($poste->heure_fin);
+            $dureeAvant = (int) $debutPoste->diffInMinutes($heureFrontiere);
+            $dureeApres = (int) $heureFrontiere->diffInMinutes($finPoste);
+            if ($dureeAvant <= 0 || $dureeApres <= 0) {
+                continue;
+            }
+
+            Poste::query()
+                ->where('devis_id', $devis->id)
+                ->whereDate('date', $frontiere['date'])
+                ->where('ordre', '>', $poste->ordre)
+                ->orderByDesc('ordre')
+                ->get()
+                ->each(fn (Poste $posteSuivant) => $posteSuivant->update(['ordre' => $posteSuivant->ordre + 1]));
+
+            $poste->update([
+                'heure_fin' => $heureFrontiere->format('H:i'),
+                'duree_min' => $dureeAvant,
+            ]);
+            Poste::create([
+                'devis_id' => $poste->devis_id,
+                'date' => $frontiere['date'],
+                'ordre' => $poste->ordre + 1,
+                'type' => 'conduite',
+                'heure_debut' => $heureFrontiere->format('H:i'),
+                'heure_fin' => $finPoste->format('H:i'),
+                'duree_min' => $dureeApres,
+                'taux' => $poste->taux,
+                'origine' => 'correction_reglementaire',
+                'auteur' => Auth::user()?->name ?? 'secrétariat',
+                'date_modif' => now(),
+            ]);
         }
     }
 
@@ -1278,6 +2091,20 @@ class DemandeShow extends Component
     protected function ajouterMinutesHeure(string $heure, int $minutes): string
     {
         return Carbon::createFromFormat('H:i', $heure)->addMinutes($minutes)->format('H:i');
+    }
+
+    protected function conduiteMaxDansFenetre(int $minutesDisponibles): int
+    {
+        $pauseSeuil = (int) Parametre::get('rse_conduite_avant_pause_min', 270);
+        $pauseMinutes = (int) Parametre::get('rse_duree_pause_min', 45);
+        for ($conduite = min(540, $minutesDisponibles); $conduite > 0; $conduite--) {
+            $nombrePauses = $conduite <= $pauseSeuil ? 0 : (int) floor(($conduite - 1) / $pauseSeuil);
+            if ($conduite + ($nombrePauses * $pauseMinutes) <= $minutesDisponibles) {
+                return $conduite;
+            }
+        }
+
+        return 0;
     }
 
     /** Clic sur « Devis PDF » alors que le devis est encore en brouillon. */
@@ -1334,6 +2161,14 @@ class DemandeShow extends Component
         $villeLat = ($this->lieuVilleLat[$etapeId] ?? null);
         $villeLng = ($this->lieuVilleLng[$etapeId] ?? null);
         $citycode = ($this->lieuCitycode[$etapeId] ?? null);
+        $ancienneVille = trim((string) ($etape->ville ?: $etape->commune?->nom));
+        $ancienneAdresse = trim((string) ($etape->adresse_normalisee ?: $etape->adresse));
+        $nouvelleVille = trim((string) ($ville ?: $ancienneVille));
+        $nouvelleAdresse = trim((string) ($this->lieuAdresse[$etapeId] ?? ''));
+        $destinationModifiee = abs((float) $etape->latitude - (float) $latitude) > 0.000001
+            || abs((float) $etape->longitude - (float) $longitude) > 0.000001
+            || $ancienneVille !== $nouvelleVille
+            || $ancienneAdresse !== $nouvelleAdresse;
 
         $etape->update([
             'commune_id' => ! empty($citycode) ? Commune::where('code_insee', $citycode)->value('id') : $etape->commune_id,
@@ -1351,7 +2186,79 @@ class DemandeShow extends Component
         ]);
         $this->alimenterCarnet($etape);
         $this->demande->refresh()->load(['categorie', 'etapes.commune', 'devis.vehicule']);
-        $this->flash = 'Informations du lieu enregistrées.';
+
+        if (! $destinationModifiee) {
+            $devis = $this->devisActuel();
+            if ($devis && $devis->cout_revient_ht > 0) {
+                $this->synchroniserPlanningApresModificationEtape($devis);
+                $this->flash = 'Informations du lieu enregistrées. Horaires, postes et coûts synchronisés.';
+                $this->dispatch('lieu-enregistre', icon: 'success', title: 'Lieu enregistré', text: 'Les horaires, les postes et les coûts ont été synchronisés avec les étapes.');
+            } else {
+                $this->flash = 'Informations du lieu enregistrées.';
+                $this->dispatch('lieu-enregistre', icon: 'success', title: 'Lieu enregistré', text: 'Les informations du lieu ont bien été enregistrées.');
+            }
+
+            return;
+        }
+
+        $devis = $this->devisActuel();
+        if (! $devis || ! $devis->vehicule_id) {
+            $this->flash = 'Destination enregistrée.';
+            $this->erreur = 'Aucun véhicule n’est affecté : le devis et ses horaires seront recalculés après affectation.';
+            $this->dispatch('lieu-enregistre', icon: 'warning', title: 'Destination enregistrée', text: $this->erreur);
+
+            return;
+        }
+
+        $champsOverrides = [
+            'distance_km', 'distance_km_charge', 'distance_km_vide', 'duree_conduite_minutes', 'temps_attente_minutes',
+            'cout_carburant', 'cout_peage', 'cout_vignettes', 'cout_chauffeur', 'cout_charges_fixes', 'cout_charges_variables',
+        ];
+        $champsOrigineOverride = array_map(fn (string $champ) => 'original_'.$champ, $champsOverrides);
+        $etatOverrideAvant = array_intersect_key(
+            $devis->getAttributes(),
+            array_flip([...$champsOverrides, ...$champsOrigineOverride, 'override_author', 'override_at'])
+        );
+        $anciensPostes = $devis->postes()->get()->map(fn (Poste $poste) => $poste->getAttributes())->all();
+
+        $devis->postes()->delete();
+        $devis->update(array_merge(
+            array_fill_keys($champsOrigineOverride, null),
+            ['override_author' => null, 'override_at' => null]
+        ));
+        $this->demande->refresh()->load(['categorie', 'etapes.commune', 'devis.vehicule', 'devis.postes']);
+
+        $this->calculer(app(MoteurCalcul::class));
+        if ($this->erreur) {
+            $devis = $this->devisActuel();
+            if ($devis) {
+                DB::table('postes')->insert($anciensPostes);
+                $devis->update($etatOverrideAvant);
+                $this->demande->refresh()->load(['categorie', 'etapes.commune', 'devis.vehicule', 'devis.postes']);
+            }
+            $this->flash = 'Destination enregistrée, mais le recalcul du devis a échoué.';
+            $this->dispatch('lieu-enregistre', icon: 'warning', title: 'Destination enregistrée', text: $this->erreur.' Les anciens postes et surcharges ont été conservés.');
+
+            return;
+        }
+
+        $devis = $this->devisActuel();
+        $grille = $devis?->calcul_payload['rse']['grille_journaliere'] ?? [];
+        if ($devis && $grille !== []) {
+            $this->completerHeuresArriveeSelonVitesseBus();
+            $this->demande->refresh()->load(['categorie', 'etapes.commune', 'devis.vehicule', 'devis.postes']);
+            app(MoteurCalcul::class)->recalculerRsePourDevis($devis);
+            $devis->refresh();
+            $grille = $devis->calcul_payload['rse']['grille_journaliere'] ?? [];
+            $this->corrigerHorairesManquantsPourReglementation($devis, $grille);
+            app(MoteurCalcul::class)->recalculerRsePourDevis($devis);
+            app(MoteurCalcul::class)->recalculerCoutsPourDevis($devis);
+            $this->demande->refresh()->load(['categorie', 'etapes.commune', 'devis.vehicule', 'devis.postes']);
+        }
+
+        $this->flash = 'Destination enregistrée. Itinéraire, prix et horaires du devis recalculés.';
+        $this->erreur = null;
+        $this->dispatch('lieu-enregistre', icon: 'success', title: 'Destination enregistrée', text: 'L’itinéraire, les prix et les horaires du devis ont été recalculés.');
     }
 
     protected function alimenterCarnet(?Etape $seule = null): void
@@ -1387,9 +2294,10 @@ class DemandeShow extends Component
     public function render()
     {
         [$debut, $fin] = $this->fenetre();
+        $devis = $this->devisActuel();
 
         return view('livewire.admin.demande-show', [
-            'devis' => $this->devisActuel(),
+            'devis' => $devis,
             'fenetre' => [$debut, $fin],
             'resume_rse' => $this->resume_rse,
             'detail_temps_service' => $this->detail_temps_service,

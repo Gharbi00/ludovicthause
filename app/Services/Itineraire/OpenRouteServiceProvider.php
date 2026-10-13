@@ -107,14 +107,21 @@ class OpenRouteServiceProvider implements ItineraireProvider
         $distanceChargeM = 0.0;
         $distanceVideM = 0.0;
         $dureeSecondes = 0.0;
+        $segmentsCalcul = [];
 
         foreach ($segments as $i => $segment) {
             $lenM = (float) data_get($segment, 'distance', 0);
             $dur = (float) data_get($segment, 'duration', 0);
+            $chargeSegment = $i >= $indexPriseEnCharge && $i < $indexDepose;
             $distanceTotaleM += $lenM;
             $dureeSecondes += $dur;
+            $segmentsCalcul[] = [
+                'distance_km' => round($lenM / 1000, 2),
+                'duree_minutes' => (int) round($dur / 60),
+                'charge' => $chargeSegment,
+            ];
 
-            if ($i >= $indexPriseEnCharge && $i < $indexDepose) {
+            if ($chargeSegment) {
                 $distanceChargeM += $lenM;
             } else {
                 $distanceVideM += $lenM;
@@ -162,6 +169,7 @@ class OpenRouteServiceProvider implements ItineraireProvider
                 'tarif_peage_km' => $tarifKm,
                 'geometry' => $geometry,
                 'tollways' => $tollways,
+                'segments' => $segmentsCalcul,
             ],
         );
     }
